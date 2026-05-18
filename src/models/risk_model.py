@@ -3,6 +3,7 @@ Risk Model - End-to-end fraud detection model
 
 Combines HTGAT with temporal encoding and risk prediction head
 """
+# Working on end-to-end risk prediction model
 
 import torch
 import torch.nn as nn

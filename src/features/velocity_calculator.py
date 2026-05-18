@@ -7,6 +7,7 @@ Computes velocity-based fraud indicators:
 - Burst detection
 - Frequency analysis
 """
+# Working on velocity-based fraud detection improvements
 
 import numpy as np
 from typing import List, Dict, Tuple, Optional

@@ -7,6 +7,7 @@ Key concept:
 - Legitimate accounts: Connect to similar entities (low entropy)
 - Mule accounts: Connect to diverse, random entities (high entropy)
 """
+# Working on entropy-based anomaly detection
 
 import numpy as np
 import networkx as nx

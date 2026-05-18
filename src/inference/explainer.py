@@ -4,6 +4,7 @@ Aegis-Oracle: Explainable AI Module
 Generates human-readable explanations for fraud detection decisions
 for regulatory compliance and transparency.
 """
+# Working on explainable AI for regulatory compliance
 
 from typing import Dict, List, Optional
 import numpy as np

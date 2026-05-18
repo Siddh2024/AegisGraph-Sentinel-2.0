@@ -6,6 +6,7 @@ Implements temporal encoding for graph edges using:
 - Time decay factors
 - Relative time encoding
 """
+# Working on temporal encoding improvements for better accuracy
 
 import torch
 import torch.nn as nn

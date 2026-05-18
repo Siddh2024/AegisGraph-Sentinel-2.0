@@ -1,0 +1,146 @@
+# AegisGraph Sentinel 2.0 - Detection Thresholds Configuration
+# All detection limits and sensitivity values centralized here
+# Load via: from src.utils.config_loader import load_thresholds
+
+# ==============================================================================
+# RISK SCORING THRESHOLDS
+# ==============================================================================
+risk_scoring:
+  # Decision thresholds for risk score (0.0 - 1.0)
+  # Rationale: Block only very high confidence, Review for investigation
+  block: 0.90        # Block transaction immediately (90%+ confidence)
+  review: 0.70       # Flag for manual review (70-89%)
+  allow: 0.50        # Allow without review (50-69%)
+  # Note: Below 0.50 is automatically allowed
+
+# ==============================================================================
+# BEHAVIORAL BIOMETRICS - HESITATION MONITOR
+# ==============================================================================
+behavioral_biometrics:
+  # Keystroke stress detection (0.0 - 1.0)
+  stress_threshold: 0.70
+  # Rationale: 70% stress score indicates likely social engineering
+  # Captures hesitation patterns from keystroke dynamics
+
+  # Graph traversal for behavioral analysis
+  max_depth: 5
+  # Rationale: 5 hops provides enough context without performance hit
+
+# ==============================================================================
+# VOICE STRESS ANALYSIS - INNOVATION 5
+# ==============================================================================
+voice_stress:
+  # Stress detection thresholds (0-100 scale)
+  stress_threshold: 30.0
+  # Rationale: Detect mild stress above 30%
+
+  coercion_threshold: 75.0
+  # Rationale: Severe coercion detected at 75%+ (phone scams)
+
+  # Audio processing
+  min_audio_duration_sec: 3.0
+  sample_rate: 16000
+
+# ==============================================================================
+# PREDICTIVE MULE IDENTIFICATION - INNOVATION 4
+# ==============================================================================
+predictive_mule:
+  # Account opening risk threshold (0-100 scale)
+  risk_threshold: 75.0
+  # Rationale: Flag accounts with 75%+ mule probability at creation
+  # Prevents first fraudulent transaction
+
+  # Time window for analysis
+  analysis_window_hours: 24
+  # Rationale: 24-hour window captures initial behavior patterns
+
+# ==============================================================================
+# HONEYPOT ESCROW - INNOVATION 2
+# ==============================================================================
+honeypot_escrow:
+  # Activation threshold (0.0 - 1.0)
+  activation_threshold: 0.90
+  # Rationale: 90%+ risk triggers honeypot
+
+  # Secondary threshold for critical indicators
+  critical_indicator_threshold: 0.80
+  # Rationale: 80%+ with critical flags also triggers honeypot
+
+  # Duration
+  escrow_duration_seconds: 900  # 15 minutes
+  # Rationale: Enough time for investigation without alerting fraudster
+
+# ==============================================================================
+# TEMPORAL ENCODING
+# ==============================================================================
+temporal_encoding:
+  # Maximum time for normalization (in seconds)
+  max_time: 86400.0  # 24 hours
+  # Rationale: 24-hour window captures daily transaction patterns
+
+  # Time decay lambda
+  decay_lambda: 0.01
+  # Rationale: Exponential decay for older transactions
+
+# ==============================================================================
+# GRAPH ANALYSIS
+# ==============================================================================
+graph_analysis:
+  # Subgraph extraction limits
+  max_subgraph_nodes: 1000
+  max_subgraph_edges: 5000
+
+  # Chain detection
+  max_chain_depth: 10
+  # Rationale: 10 hops prevents infinite loops while catching mule chains
+
+  # Betweenness centrality spike detection
+  lateral_movement_threshold_multiplier: 3.0
+  # Rationale: Current centrality > 3x baseline indicates lateral movement
+  lateral_movement_std_multiplier: 2.0
+  # Rationale: Current > baseline + 2 std also indicates spike
+
+# ==============================================================================
+# VELOCITY CALCULATOR
+# ==============================================================================
+velocity:
+  # Time window for velocity calculation (seconds)
+  time_window: 3600  # 1 hour
+  # Rationale: 1-hour window captures burst transactions
+
+  # Amount thresholds
+  max_amount_per_transaction: 1000000.0  # 10 Lakhs
+  high_amount_threshold: 50000.0  # 50k
+
+# ==============================================================================
+# ENTROPY CALCULATOR
+# ==============================================================================
+entropy:
+  # Neighborhood size for entropy calculation
+  neighborhood_size: 2
+
+  # Anomaly threshold
+  high_entropy_threshold: 0.8
+  # Rationale: High entropy indicates random connections (mule behavior)
+
+# ==============================================================================
+# TRAINING THRESHOLDS
+# ==============================================================================
+training:
+  # Classification threshold for predictions
+  classification_threshold: 0.5
+
+  # Gradient clipping
+  max_grad_norm: 1.0
+  # Rationale: Prevents gradient explosion
+
+  # Early stopping
+  early_stopping_patience: 10
+  min_improvement: 0.01
+
+# ==============================================================================
+# API RATE LIMITING (Future)
+# ==============================================================================
+rate_limiting:
+  requests_per_minute: 60
+  burst_limit: 10

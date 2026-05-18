@@ -1,3 +1,4 @@
+# Testing risk scorer functionality
 from src.inference.risk_scorer import compute_risk_score
 
 print('using', compute_risk_score)

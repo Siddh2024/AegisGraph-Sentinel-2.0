@@ -111,7 +111,6 @@ AegisGraph Sentinel 2.0/
 │   ├── inference/         # Risk scoring and explanation
 │   ├── api/               # FastAPI service
 │   └── utils/             # Helper utilities
-├── notebooks/             # Jupyter notebooks for analysis
 ├── tests/                 # Unit tests
 ├── data/                  # Generated datasets (created at runtime)
 ├── models/                # Saved model checkpoints (created at runtime)
@@ -120,13 +119,29 @@ AegisGraph Sentinel 2.0/
 
 ## 🔬 Key Features
 
-### 1. **Hesitation Monitor**
+### 1. **Lateral Movement Detection (MITRE ATT&CK TA0008)**
+Dynamic spike detection that tracks betweenness centrality changes over time to identify attackers pivoting through the network.
+
+- **History Tracking**: Stores last 10 betweenness centrality values per account
+- **Baseline Comparison**: Detects when current score spikes significantly from historical average
+- **Spike Triggers**: Flags lateral movement when current > baseline + 2 std OR current > 3x baseline
+- **Risk Impact**: Adds +0.25 to graph risk when lateral movement detected
+
+### 2. **Velocity & Amount Risk Scoring**
+Fixed risk scoring to properly scale with transaction amount.
+
+- **Issue**: Changing amount from ₹5,000 to ₹250,000 returned identical risk scores
+- **Root Cause**: Two fallback functions existed, only one was fixed; `__pycache__` cached stale code
+- **Solution**: Fixed both functions, cleared `__pycache__`, restarted servers
+- **Result**: ₹5,000 → 22% | ₹50k+ (mule) → 56% REVIEW | ₹150k+ (mule) → BLOCK
+
+### 3. **Hesitation Monitor**
 Analyzes keystroke dynamics to detect stress patterns indicating social engineering attacks.
 
-### 2. **Honeypot Virtual Escrow**
+### 3. **Honeypot Virtual Escrow**
 Deception-based fund containment that prevents fraudster adaptation while buying investigation time.
 
-### 3. **Aegis-Oracle**
+### 4. **Aegis-Oracle**
 Explainable AI engine that generates human-readable explanations for regulatory compliance.
 
 ## 💻 API Usage
@@ -299,6 +314,6 @@ For inquiries regarding deployment or collaboration, please contact the developm
 
 
 **Domain**: Financial Crime Prevention & AI/ML  
-**Date**: February 26, 2026
+**Last Updated**: May 17, 2026
 
 **"We don't just stop transactions. We stop the criminal's clock."**

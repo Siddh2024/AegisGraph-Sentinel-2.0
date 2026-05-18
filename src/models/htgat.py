@@ -6,6 +6,7 @@ Implements the core HTGAT layer as described in the paper, with support for:
 - Multi-head attention mechanism
 - Temporal edge encoding
 """
+# Working on HTGAT model architecture improvements
 
 import torch
 import torch.nn as nn

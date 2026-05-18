@@ -1,3 +1,4 @@
+# Manual honeypot testing script
 from src.api.main import state
 
 print('manager', state.honeypot_manager)

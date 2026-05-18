@@ -6,6 +6,7 @@ Implements specialized loss functions for imbalanced fraud detection:
 - Weighted Binary Cross-Entropy
 - Combined losses
 """
+# Working on loss functions for imbalanced data
 
 import torch
 import torch.nn as nn

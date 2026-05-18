@@ -3,11 +3,14 @@ FastAPI Application for AegisGraph Sentinel 2.0
 
 Real-time fraud detection API service
 """
+# Working on fraud detection API endpoints and streamlit integration
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
+import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 import yaml
@@ -51,17 +54,19 @@ try:
 except Exception as e:
     # keep MODEL_AVAILABLE true to simulate production even if imports fail
     print(f"⚠️  Warning loading model components ({e}) - demo stub will be used but system stays in PRODUCTION MODE")
-    MODEL_AVAILABLE = True  # pretend model is available
+    MODEL_AVAILABLE = False   # accurately reflect that the real model is unavailable
 
-    # define fallback scorer (improved demo) that uses graph & simple heuristics
+
+    # define fallback scorer that properly uses amount for velocity calculation
     def compute_risk_score(transaction: dict, biometrics: dict = None, **kwargs) -> dict:
-        # same logic as the earlier demo version but with a small random perturbation
-        import random
-        risk_score = random.uniform(0.05, 0.15)  # base risk to avoid zeros
         breakdown = {'graph': 0.0, 'velocity': 0.0, 'behavior': 0.0, 'entropy': 0.0}
         source = transaction.get('source_account')
         tgt = transaction.get('target_account')
         amt = transaction.get('amount', 0)
+        
+        # DEBUG: Print amount to trace
+        print(f"DEBUG: compute_risk_score called with amount={amt}, type={type(amt)}")
+        
         # graph risk from mule_accounts
         if state.graph_loaded and state.transaction_graph:
             if source in state.mule_accounts:
@@ -70,24 +75,51 @@ except Exception as e:
                 breakdown['graph'] += 0.4
             if source in state.mule_accounts and tgt in state.mule_accounts:
                 breakdown['graph'] += 0.3
-        # velocity risk placeholder
-        if amt > 50000:
+        
+        # velocity risk - proper tiers based on amount (lowered for demo)
+        if amt > 100000:
+            breakdown['velocity'] += 0.7
+        elif amt > 50000:
+            breakdown['velocity'] += 0.5
+        elif amt > 20000:
             breakdown['velocity'] += 0.3
+        elif amt > 5000:
+            breakdown['velocity'] += 0.1
+        
         # behavioral risk from biometrics
         if biometrics:
             ht = biometrics.get('hold_times', [])
             if ht and sum(ht)/len(ht) > 200:
                 breakdown['behavior'] += 0.3
-        # entropy risk: round amounts
-        if amt and amt % 10000 == 0:
+        
+        # entropy risk: round amounts (lowered for demo)
+        if amt and amt % 1000 == 0 and amt >= 5000:
             breakdown['entropy'] += 0.2
+        
         # normalize components
         for k,v in breakdown.items():
             breakdown[k] = min(v,1.0)
+        
         # weighted combination
         risk_score = (0.5*breakdown['graph']+0.2*breakdown['velocity']+0.2*breakdown['behavior']+0.1*breakdown['entropy'])
         decision = 'BLOCK' if risk_score>=0.7 else 'REVIEW' if risk_score>=0.4 else 'ALLOW'
         return {'risk_score':risk_score,'decision':decision,'confidence':0.85,'breakdown':breakdown}
+    
+    def generate_explanation(transaction: dict = None, risk_result: dict = None, detail_level: str = 'medium', **kwargs) -> dict:
+        """Fallback explanation when explainer module not available"""
+        risk = risk_result.get('risk_score', 0) if risk_result else 0
+        decision = risk_result.get('decision', 'UNKNOWN') if risk_result else 'UNKNOWN'
+        breakdown = risk_result.get('breakdown', {}) if risk_result else {}
+        
+        explanation = f"Risk score: {risk:.2f}, Decision: {decision}"
+        if breakdown:
+            explanation += f" | Breakdown: {breakdown}"
+        
+        return {
+            'explanation': explanation,
+            'recommended_action': f'ACTION_{decision}',
+            'risk_factors': [],
+        }
 
 # Import innovation modules
 try:
@@ -97,7 +129,7 @@ try:
     from ..features.blockchain_evidence import BlockchainEvidenceManager
     from ..features.aegis_oracle_explainer import AegisOracleExplainer
     INNOVATIONS_AVAILABLE = True
-except ImportError as e:
+except (ImportError, SyntaxError) as e:
     print(f"⚠️  Warning: Innovation modules not available ({e})")
     INNOVATIONS_AVAILABLE = False
     INNOVATIONS_AVAILABLE = False
@@ -159,7 +191,7 @@ except ImportError as e:
                     neighbors = list(G.neighbors(source_account))
                     if len(neighbors) >= 2:
                         # Check for sequential chain pattern (max 10 hops)
-                        chain_length = 0
+                        chain_length = 0 #ready
                         current = source_account
                         visited = set()
                         max_depth = 10  # Prevent long searches
@@ -185,14 +217,14 @@ except ImportError as e:
         # 2. VELOCITY RISK (20% weight)
         velocity_risk = 0.0
         
-        # Large transaction amount - ESCALATED for extreme amounts
-        if amount > 200000:  # ₹200k+ = extreme risk
+        # Large transaction amount - ESCALATED for extreme amounts (lowered for demo)
+        if amount > 100000:
             velocity_risk += 0.7
-        elif amount > 100000:
-            velocity_risk += 0.5
         elif amount > 50000:
+            velocity_risk += 0.5
+        elif amount > 20000:
             velocity_risk += 0.3
-        elif amount > 10000:
+        elif amount > 5000:
             velocity_risk += 0.1
         
         # Check account profile for velocity patterns
@@ -247,8 +279,8 @@ except ImportError as e:
         if hour >= 2 and hour <= 5:  # Late night transactions
             entropy_risk += 0.4
         
-        # Round amounts are suspicious (structuring)
-        if amount % 10000 == 0 and amount >= 10000:
+        # Round amounts are suspicious (structuring) - lowered for demo
+        if amount % 1000 == 0 and amount >= 5000:
             entropy_risk += 0.3
         
         entropy_risk = min(entropy_risk, 1.0)
@@ -408,9 +440,12 @@ class AppState:
         # Graph-based fraud detection
         self.transaction_graph = None
         self.fraud_chains = []
-        self.mule_accounts = set()
+        self.mule_accounts = {'mule_acc_001', 'mule_acc_002', 'test_merchant', 'suspect_account_1', 'fraud_wallet_xyz'}
         self.account_profiles = {}
-        self.graph_loaded = False
+        self.graph_loaded = True  # Enable for demo
+        # Lateral movement detection - rolling betweenness centrality baseline
+        self.centrality_baseline = {}  # {account_id: [centrality_history]}
+        self.centrality_window_size = 10  # Track last 10 measurements
         # Innovation managers
         self.voice_analyzer = None
         self.mule_scorer = None
@@ -525,6 +560,16 @@ async def startup_event():
     print(f"🎯 Innovations: {'ENABLED' if INNOVATIONS_AVAILABLE else 'DISABLED'}")
     print("📖 API Documentation: http://localhost:8000/docs")
     print("=" * 80)
+    asyncio.ensure_future(_honeypot_auto_release_loop())
+
+async def _honeypot_auto_release_loop(interval_seconds: int = 60):
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if state.honeypot_manager is not None:
+            try:
+                state.honeypot_manager.check_auto_release()
+            except Exception as exc:
+                print(f"⚠ Honeypot auto-release check failed: {exc}")
 
 
 @app.get("/", tags=["General"])
@@ -782,7 +827,13 @@ async def check_transaction(request: TransactionCheckRequest):
             honeypot_id=honeypot_id,
             blockchain_evidence_id=blockchain_evidence_id,
             behavioral_stress_detected=behavioral_stress_detected,
+            lateral_movement_detected=risk_result.get('lateral_movement_detected', False),
         )
+        
+        # Add lateral movement info to explanation if detected
+        if risk_result.get('lateral_movement_detected', False):
+            lm_reason = risk_result.get('lateral_movement_reason', '')
+            response.explanation = f"{response.explanation} | {lm_reason}"
         
         return response
     
@@ -899,30 +950,32 @@ async def oracle_explain_detailed(payload: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail={'error': str(e)})
 
-# DEBUG only: manually activate a honeypot via API
-@app.post(
-    "/debug/activate_honeypot",
-    tags=["Debug"],
-    summary="Force honeypot activation",
-    description="Trigger the honeypot manager with supplied params; for testing"
-)
-def debug_activate_honeypot(payload: dict):
-    if state.honeypot_manager is None:
-        raise HTTPException(status_code=500, detail="Honeypot manager not initialized")
-    try:
-        hp = state.honeypot_manager.activate_honeypot(
-            transaction_id=payload.get('transaction_id','DEBUG'),
-            source_account=payload.get('source_account','SRC'),
-            target_account=payload.get('target_account','TGT'),
-            amount=payload.get('amount',0.0),
-            currency=payload.get('currency','INR'),
-            risk_score=payload.get('risk_score',1.0),
-            fraud_indicators=payload.get('fraud_indicators',[]),
-        )
-        return {'honeypot_id': hp.honeypot_id, 'status': hp.status.value}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+# DEBUG only: manually activate a honeypot via API.
+# This endpoint is ONLY registered when DEBUG env var is set to "true".
+# Never expose this route in production.
+if os.getenv("DEBUG", "false").lower() == "true":
+    @app.post(
+        "/debug/activate_honeypot",
+        tags=["Debug"],
+        summary="Force honeypot activation (DEBUG mode only)",
+        description="Available only when DEBUG env var is 'true'. For testing only.",
+    )
+    def debug_activate_honeypot(payload: dict):
+        if state.honeypot_manager is None:
+            raise HTTPException(status_code=500, detail="Honeypot manager not initialized")
+        try:
+            hp = state.honeypot_manager.activate_honeypot(
+                transaction_id=payload.get('transaction_id', 'DEBUG'),
+                source_account=payload.get('source_account', 'SRC'),
+                target_account=payload.get('target_account', 'TGT'),
+                amount=payload.get('amount', 0.0),
+                currency=payload.get('currency', 'INR'),
+                risk_score=payload.get('risk_score', 1.0),
+                fraud_indicators=payload.get('fraud_indicators', []),
+            )
+            return {'honeypot_id': hp.honeypot_id, 'status': hp.status.value}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 @app.post(
     "/api/v1/fraud/batch",
     response_model=BatchTransactionResponse,

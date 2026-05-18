@@ -1,6 +1,7 @@
 """
 Helper utilities for AegisGraph Sentinel
 """
+# Working on utility functions for the project
 
 import yaml
 import torch
@@ -206,3 +207,147 @@ def get_timestamp() -> str:
         ISO format timestamp
     """
     return datetime.utcnow().isoformat() + 'Z'
+
+
+# ==============================================================================
+# THRESHOLD LOADING AND VALIDATION
+# ==============================================================================
+
+class ThresholdValidationError(Exception):
+    """Raised when threshold validation fails"""
+    pass
+
+
+def validate_thresholds(thresholds: dict) -> list:
+    """
+    Validate threshold values for correctness
+    
+    Args:
+        thresholds: Threshold configuration dictionary
+    
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors = []
+    
+    # Risk scoring: validate ranges
+    if 'risk_scoring' in thresholds:
+        rs = thresholds['risk_scoring']
+        if not (0 <= rs.get('block', 1) <= 1):
+            errors.append("risk_scoring.block must be between 0 and 1")
+        if not (0 <= rs.get('review', 1) <= 1):
+            errors.append("risk_scoring.review must be between 0 and 1")
+        if not (0 <= rs.get('allow', 1) <= 1):
+            errors.append("risk_scoring.allow must be between 0 and 1")
+        if rs.get('block', 0) <= rs.get('review', 0):
+            errors.append("risk_scoring.block must be > review")
+        if rs.get('review', 0) <= rs.get('allow', 0):
+            errors.append("risk_scoring.review must be > allow")
+    
+    # Behavioral biometrics
+    if 'behavioral_biometrics' in thresholds:
+        bb = thresholds['behavioral_biometrics']
+        if not (0 <= bb.get('stress_threshold', 1) <= 1):
+            errors.append("behavioral_biometrics.stress_threshold must be 0-1")
+        if bb.get('max_depth', 0) < 1:
+            errors.append("behavioral_biometrics.max_depth must be >= 1")
+    
+    # Voice stress
+    if 'voice_stress' in thresholds:
+        vs = thresholds['voice_stress']
+        if not (0 <= vs.get('stress_threshold', 100) <= 100):
+            errors.append("voice_stress.stress_threshold must be 0-100")
+        if not (0 <= vs.get('coercion_threshold', 100) <= 100):
+            errors.append("voice_stress.coercion_threshold must be 0-100")
+        if vs.get('coercion_threshold', 0) <= vs.get('stress_threshold', 0):
+            errors.append("voice_stress.coercion_threshold must be > stress_threshold")
+    
+    # Predictive mule
+    if 'predictive_mule' in thresholds:
+        pm = thresholds['predictive_mule']
+        if not (0 <= pm.get('risk_threshold', 100) <= 100):
+            errors.append("predictive_mule.risk_threshold must be 0-100")
+    
+    # Honeypot escrow
+    if 'honeypot_escrow' in thresholds:
+        he = thresholds['honeypot_escrow']
+        if not (0 <= he.get('activation_threshold', 1) <= 1):
+            errors.append("honeypot_escrow.activation_threshold must be 0-1")
+        if not (0 <= he.get('critical_indicator_threshold', 1) <= 1):
+            errors.append("honeypot_escrow.critical_indicator_threshold must be 0-1")
+        if he.get('escrow_duration_seconds', 0) < 60:
+            errors.append("honeypot_escrow.escrow_duration_seconds must be >= 60")
+    
+    # Graph analysis
+    if 'graph_analysis' in thresholds:
+        ga = thresholds['graph_analysis']
+        if ga.get('max_chain_depth', 0) < 2:
+            errors.append("graph_analysis.max_chain_depth must be >= 2")
+        if ga.get('lateral_movement_threshold_multiplier', 0) < 1:
+            errors.append("graph_analysis.lateral_movement_threshold_multiplier must be >= 1")
+    
+    return errors
+
+
+def load_thresholds(config_path: str = "config/thresholds.yaml", 
+                    validate: bool = True) -> dict:
+    """
+    Load detection thresholds from YAML configuration file
+    
+    Args:
+        config_path: Path to thresholds.yaml file
+        validate: Whether to validate thresholds on load
+    
+    Returns:
+        Threshold configuration dictionary
+    
+    Raises:
+        FileNotFoundError: If config file not found
+        ThresholdValidationError: If validation fails
+    """
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Thresholds config not found: {config_path}")
+    
+    with open(path, 'r') as f:
+        thresholds = yaml.safe_load(f)
+    
+    if validate:
+        errors = validate_thresholds(thresholds)
+        if errors:
+            raise ThresholdValidationError(
+                f"Threshold validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
+    
+    logging.getLogger(__name__).info(f"Loaded thresholds from {config_path}")
+    return thresholds
+
+
+def get_threshold(path: str, default: Any = None) -> Any:
+    """
+    Get a specific threshold value using dot notation
+    
+    Args:
+        path: Dot-separated path (e.g., 'risk_scoring.block')
+        default: Default value if path not found
+    
+    Returns:
+        Threshold value or default
+    
+    Example:
+        >>> get_threshold('risk_scoring.block')
+        0.90
+        >>> get_threshold('voice_stress.stress_threshold', 50.0)
+        50.0
+    """
+    thresholds = load_thresholds()
+    keys = path.split('.')
+    
+    value = thresholds
+    for key in keys:
+        if isinstance(value, dict) and key in value:
+            value = value[key]
+        else:
+            return default
+    
+    return value

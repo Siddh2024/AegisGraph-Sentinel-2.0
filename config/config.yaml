@@ -172,6 +172,13 @@ monitoring:
     format: "json"
     output_dir: "logs"
 
+  mlflow:
+    enabled: false
+    tracking_uri: "mlruns"
+    experiment_name: "AegisGraph-Sentinel"
+    run_name: null
+    log_artifacts: true
+
 # Deployment
 deployment:
   mode: "single"  # single, distributed

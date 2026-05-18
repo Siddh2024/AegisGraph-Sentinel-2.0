@@ -1,4 +1,5 @@
 """Quick script to demonstrate variable risk scores for mule and normal accounts"""
+# Working on risk score variation testing
 import requests
 import json
 from pathlib import Path

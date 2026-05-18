@@ -2,6 +2,7 @@
 AegisGraph Sentinel 2.0 - Streamlit Web Application
 Real-time Fraud Detection Interface
 """
+# Updated: May 17, 2026
 
 import streamlit as st
 import requests
@@ -11,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
-import time
+import time #ready to deploy
 
 # Page configuration
 st.set_page_config(
@@ -128,20 +129,28 @@ if page == "🏠 Dashboard":
             st.markdown("---")
             st.subheader("⚡ Quick Transaction Test")
 
-            with st.form("quick_transaction_test", border=True):
+            # Initialize session state for quick test
+            if 'quick_test_result' not in st.session_state:
+                st.session_state.quick_test_result = None
+            if 'quick_test_error' not in st.session_state:
+                st.session_state.quick_test_error = None
+
+            # Compact input form (keeps captions and session-state behavior)
+            with st.form("quick_transaction_test", clear_on_submit=False):
                 quick_cols = st.columns([1.3, 1, 0.9])
                 with quick_cols[0]:
-                    quick_amount = st.number_input(
+                    st.number_input(
                         "Amount",
                         min_value=1.0,
                         max_value=1000000.0,
                         value=5000.0,
                         step=100.0,
                         format="%.2f",
+                        key="quick_amount_input",
                     )
                     st.caption("₹ transaction value to score")
                 with quick_cols[1]:
-                    quick_mode = st.selectbox("Mode", ["UPI", "IMPS", "NEFT", "RTGS"], index=0)
+                    st.selectbox("Mode", ["UPI", "IMPS", "NEFT", "RTGS"], index=0, key="quick_mode_input")
                     st.caption("Payment rail")
                 with quick_cols[2]:
                     st.write("")
@@ -149,81 +158,102 @@ if page == "🏠 Dashboard":
                     submitted = st.form_submit_button("🔍 Check Now", use_container_width=True)
 
             if submitted:
+                # Reset previous state
+                st.session_state.quick_test_result = None
+                st.session_state.quick_test_error = None
+
+                current_amount = st.session_state.get("quick_amount_input", 5000.0)
+                current_mode = st.session_state.get("quick_mode_input", "UPI")
+
                 with st.spinner("Analyzing..."):
                     txn = {
                         "transaction_id": f"QUICK_{int(time.time())}",
                         "source_account": "quick_test_user",
                         "target_account": "test_merchant",
-                        "amount": quick_amount,
+                        "amount": float(current_amount),
                         "currency": "INR",
-                        "mode": quick_mode,
+                        "mode": current_mode,
                         "timestamp": datetime.utcnow().isoformat() + "Z"
                     }
 
                     try:
-                        response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=10)
+                        response = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=15)
                         response.raise_for_status()
-                        result = response.json()
-
-                        risk_score = result.get('risk_score', 0)
-                        decision = result.get('decision', 'UNKNOWN')
-
-                        # Display result
-                        st.markdown("---")
-                        col_a, col_b, col_c = st.columns(3)
-
-                        with col_a:
-                            st.metric("Risk Score", f"{risk_score:.3f}")
-                        with col_b:
-                            color = "🟢" if decision == "ALLOW" else "🟡" if decision == "REVIEW" else "🔴"
-                            st.metric("Decision", f"{color} {decision}")
-                        with col_c:
-                            st.metric("Confidence", f"{(1 - abs(risk_score - 0.5) * 2) * 100:.1f}%")
-
-                        # Risk Gauge
-                        fig = go.Figure(go.Indicator(
-                            mode="gauge+number+delta",
-                            value=risk_score * 100,
-                            domain={'x': [0, 1], 'y': [0, 1]},
-                            title={'text': "Risk Level", 'font': {'size': 24}},
-                            delta={'reference': 50, 'increasing': {'color': "red"}},
-                            gauge={
-                                'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                                'bar': {'color': "darkblue"},
-                                'bgcolor': "white",
-                                'borderwidth': 2,
-                                'bordercolor': "gray",
-                                'steps': [
-                                    {'range': [0, 40], 'color': '#90EE90'},
-                                    {'range': [40, 70], 'color': '#FFD700'},
-                                    {'range': [70, 100], 'color': '#FF6B6B'}
-                                ],
-                                'threshold': {
-                                    'line': {'color': "red", 'width': 4},
-                                    'thickness': 0.75,
-                                    'value': 90
-                                }
-                            }
-                        ))
-                        fig.update_layout(height=300)
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        # Show risk breakdown
-                        if 'risk_breakdown' in result:
-                            breakdown = result['risk_breakdown']
-                            st.subheader("📊 Risk Breakdown")
-                            breakdown_cols = st.columns(len(breakdown))
-                            for idx, (component, value) in enumerate(breakdown.items()):
-                                with breakdown_cols[idx]:
-                                    st.metric(component.title(), f"{value:.2%}")
-
-                        st.info(f"💡 {result.get('explanation', 'No explanation available')}")
-                        st.success("✅ Transaction analyzed successfully!")
-
+                        st.session_state.quick_test_result = response.json()
                     except requests.exceptions.RequestException as e:
-                        st.error(f"❌ API Error: {str(e)}")
+                        st.session_state.quick_test_error = f"API Error: {str(e)}"
                     except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
+                        st.session_state.quick_test_error = f"Error: {str(e)}"
+
+            # Display result if exists
+            if st.session_state.quick_test_result:
+                result = st.session_state.quick_test_result
+                risk_score = result.get('risk_score', 0)
+                decision = result.get('decision', 'UNKNOWN')
+
+                st.markdown("---")
+                col_a, col_b, col_c = st.columns(3)
+
+                with col_a:
+                    st.metric("Risk Score", f"{risk_score:.3f}")
+                with col_b:
+                    color = "🟢" if decision == "ALLOW" else "🟡" if decision == "REVIEW" else "🔴"
+                    st.metric("Decision", f"{color} {decision}")
+                with col_c:
+                    conf = result.get('confidence', 0.85)
+                    st.metric("Confidence", f"{conf:.1%}")
+
+                # Risk Gauge
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number+delta",
+                    value=risk_score * 100,
+                    domain={'x': [0, 1], 'y': [0, 1]},
+                    title={'text': "Risk Level", 'font': {'size': 24}},
+                    delta={'reference': 50, 'increasing': {'color': "red"}},
+                    gauge={
+                        'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
+                        'bar': {'color': "darkblue"},
+                        'bgcolor': "white",
+                        'borderwidth': 2,
+                        'bordercolor': "gray",
+                        'steps': [
+                            {'range': [0, 40], 'color': '#90EE90'},
+                            {'range': [40, 70], 'color': '#FFD700'},
+                            {'range': [70, 100], 'color': '#FF6B6B'}
+                        ],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': 90
+                        }
+                    }
+                ))
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Show risk breakdown - use 'breakdown' key (API returns breakdown)
+                breakdown = result.get('breakdown', {})
+                if breakdown:
+                    st.subheader("📊 Risk Breakdown")
+                    breakdown_cols = st.columns(len(breakdown))
+                    for idx, (component, value) in enumerate(breakdown.items()):
+                        with breakdown_cols[idx]:
+                            st.metric(component.title(), f"{value:.2%}")
+
+                st.info(f"💡 {result.get('explanation', 'No explanation available')}")
+                st.success("✅ Transaction analyzed successfully!")
+
+                # Clear result button
+                if st.button("Clear Result", key="clear_quick_result"):
+                    st.session_state.quick_test_result = None
+                    st.rerun()
+
+            # Display error if exists
+            if st.session_state.quick_test_error:
+                st.error(st.session_state.quick_test_error)
+                if st.button("Clear Error", key="clear_quick_error"):
+                    st.session_state.quick_test_error = None
+                    st.rerun()
         
         else:
             st.error("Unable to fetch statistics")

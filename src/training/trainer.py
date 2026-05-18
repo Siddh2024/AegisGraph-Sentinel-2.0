@@ -1,6 +1,7 @@
 """
 Training Pipeline for HTGNN Fraud Detection Model
 """
+# Working on model training pipeline improvements
 
 import torch
 import torch.nn as nn
@@ -11,10 +12,17 @@ import numpy as np
 from pathlib import Path
 import yaml
 from tqdm import tqdm
-import time
+import mlflow
+import mlflow.pytorch
+from contextlib import contextmanager
 
 from .losses import FocalLoss, CombinedLoss
-from ..models.risk_model import FraudDetectionModel
+
+
+@contextmanager
+def _nullcontext():
+    """Fallback context manager for when MLflow is disabled"""
+    yield
 
 
 class Trainer:
@@ -27,7 +35,8 @@ class Trainer:
     - Learning rate scheduling
     - Model checkpointing
     - Metrics tracking
-    
+    - Optional MLflow experiment tracking
+
     Args:
         model: Fraud detection model
         config: Configuration dictionary
@@ -98,7 +107,16 @@ class Trainer:
             'train_metrics': [],
             'val_metrics': [],
         }
-    
+
+        # MLflow setup
+        mlflow_config = config.get('mlflow', {})
+        self.mlflow_enabled = mlflow_config.get('enabled', False)
+
+        if self.mlflow_enabled:
+            mlflow.set_tracking_uri(mlflow_config.get('tracking_uri', 'mlruns'))
+            mlflow.set_experiment(mlflow_config.get('experiment_name', 'AegisGraph-Sentinel'))
+            print("MLflow tracking enabled")
+
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """
         Train for one epoch
@@ -157,7 +175,7 @@ class Trainer:
         metrics['loss'] = avg_loss
         
         return metrics
-    
+
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """
         Validate model
@@ -203,7 +221,7 @@ class Trainer:
         metrics['loss'] = avg_loss
         
         return metrics
-    
+
     def train(
         self,
         train_loader: DataLoader,
@@ -232,64 +250,99 @@ class Trainer:
         print(f"Total epochs: {num_epochs}")
         print(f"Early stopping patience: {early_stopping_patience}")
         print("-" * 80)
-        
-        for epoch in range(num_epochs):
-            self.current_epoch = epoch
-            
-            # Train
-            train_metrics = self.train_epoch(train_loader)
-            self.history['train_loss'].append(train_metrics['loss'])
-            self.history['train_metrics'].append(train_metrics)
-            
-            # Validate
-            val_metrics = self.validate(val_loader)
-            self.history['val_loss'].append(val_metrics['loss'])
-            self.history['val_metrics'].append(val_metrics)
-            
-            # Learning rate scheduling
-            if self.scheduler is not None:
-                self.scheduler.step()
-            
-            # Print metrics
-            print(f"\nEpoch {epoch+1}/{num_epochs}")
-            print(f"  Train - Loss: {train_metrics['loss']:.4f}, "
-                  f"F1: {train_metrics['f1']:.4f}, "
-                  f"Precision: {train_metrics['precision']:.4f}, "
-                  f"Recall: {train_metrics['recall']:.4f}")
-            print(f"  Val   - Loss: {val_metrics['loss']:.4f}, "
-                  f"F1: {val_metrics['f1']:.4f}, "
-                  f"Precision: {val_metrics['precision']:.4f}, "
-                  f"Recall: {val_metrics['recall']:.4f}")
-            
-            # Model checkpointing
-            if val_metrics['f1'] > self.best_val_f1:
-                self.best_val_f1 = val_metrics['f1']
-                self.best_val_loss = val_metrics['loss']
-                self.patience_counter = 0
+
+        mlflow_config = self.config.get('mlflow', {})
+        run_name = mlflow_config.get('run_name', None)
+
+        with (mlflow.start_run(run_name=run_name) if self.mlflow_enabled else _nullcontext()):
+
+            if self.mlflow_enabled:
+                train_cfg = self.config.get('training', {})
+                mlflow.log_params({
+                    "learning_rate": train_cfg.get('learning_rate'),
+                    "batch_size": train_cfg.get('batch_size'),
+                    "num_epochs": num_epochs,
+                    "optimizer": train_cfg.get('optimizer'),
+                    "scheduler": train_cfg.get('scheduler'),
+                    "loss_type": train_cfg.get('loss', {}).get('type'),
+                    "early_stopping_patience": early_stopping_patience,
+                    "device": str(self.device),
+                })
+
+            for epoch in range(num_epochs):
+                self.current_epoch = epoch
                 
-                # Save best model
-                self.save_checkpoint(save_path / 'htgnn_best.pt')
-                print(f"  ✓ New best model saved (F1: {self.best_val_f1:.4f})")
-            else:
-                self.patience_counter += 1
+                # Train
+                train_metrics = self.train_epoch(train_loader)
+                self.history['train_loss'].append(train_metrics['loss'])
+                self.history['train_metrics'].append(train_metrics)
+                
+                # Validate
+                val_metrics = self.validate(val_loader)
+                self.history['val_loss'].append(val_metrics['loss'])
+                self.history['val_metrics'].append(val_metrics)
+                
+                # Learning rate scheduling
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                
+                # Print metrics
+                print(f"\nEpoch {epoch+1}/{num_epochs}")
+                print(f"  Train - Loss: {train_metrics['loss']:.4f}, "
+                      f"F1: {train_metrics['f1']:.4f}, "
+                      f"Precision: {train_metrics['precision']:.4f}, "
+                      f"Recall: {train_metrics['recall']:.4f}")
+                print(f"  Val   - Loss: {val_metrics['loss']:.4f}, "
+                      f"F1: {val_metrics['f1']:.4f}, "
+                      f"Precision: {val_metrics['precision']:.4f}, "
+                      f"Recall: {val_metrics['recall']:.4f}")
+
+                if self.mlflow_enabled:
+                    mlflow.log_metrics({
+                        "train_loss": train_metrics['loss'],
+                        "train_f1": train_metrics['f1'],
+                        "train_precision": train_metrics['precision'],
+                        "train_recall": train_metrics['recall'],
+                        "train_roc_auc": train_metrics['roc_auc'],
+                        "val_loss": val_metrics['loss'],
+                        "val_f1": val_metrics['f1'],
+                        "val_precision": val_metrics['precision'],
+                        "val_recall": val_metrics['recall'],
+                        "val_roc_auc": val_metrics['roc_auc'],
+                    }, step=epoch)
+                
+                # Model checkpointing
+                if val_metrics['f1'] > self.best_val_f1:
+                    self.best_val_f1 = val_metrics['f1']
+                    self.best_val_loss = val_metrics['loss']
+                    self.patience_counter = 0
+                    
+                    # Save best model
+                    self.save_checkpoint(save_path / 'htgnn_best.pt')
+                    print(f"New best model saved (F1: {self.best_val_f1:.4f})")
+
+                    if self.mlflow_enabled and mlflow_config.get('log_artifacts', True):
+                        mlflow.pytorch.log_model(self.model, artifact_path="best_model")
+                else:
+                    self.patience_counter += 1
+                
+                # Early stopping
+                if self.patience_counter >= early_stopping_patience:
+                    print(f"\n Early stopping triggered after {epoch+1} epochs")
+                    break
+                
+                print("-" * 80)
+
+            # Save final model
+            self.save_checkpoint(save_path / 'htgnn_final.pt')
             
-            # Early stopping
-            if self.patience_counter >= early_stopping_patience:
-                print(f"\n Early stopping triggered after {epoch+1} epochs")
-                break
+            # Save training history
+            self.save_history(save_path / 'training_history.yaml')
             
-            print("-" * 80)
-        
-        # Save final model
-        self.save_checkpoint(save_path / 'htgnn_final.pt')
-        
-        # Save training history
-        self.save_history(save_path / 'training_history.yaml')
-        
-        print("\nTraining completed!")
-        print(f"Best validation F1: {self.best_val_f1:.4f}")
-        print(f"Best validation loss: {self.best_val_loss:.4f}")
-    
+            print("\nTraining completed!")
+            print(f"Best validation F1: {self.best_val_f1:.4f}")
+            print(f"Best validation loss: {self.best_val_loss:.4f}")
+
     def save_checkpoint(self, path: Path):
         """Save model checkpoint"""
         torch.save({
@@ -300,7 +353,7 @@ class Trainer:
             'best_val_loss': self.best_val_loss,
             'config': self.config,
         }, path)
-    
+
     def load_checkpoint(self, path: Path):
         """Load model checkpoint"""
         checkpoint = torch.load(path, map_location=self.device)
@@ -309,19 +362,19 @@ class Trainer:
         self.current_epoch = checkpoint['epoch']
         self.best_val_f1 = checkpoint['best_val_f1']
         self.best_val_loss = checkpoint['best_val_loss']
-    
+
     def save_history(self, path: Path):
         """Save training history"""
         with open(path, 'w') as f:
             yaml.dump(self.history, f)
-    
+
     def _batch_to_device(self, batch: dict) -> dict:
         """Move batch tensors to device"""
         return {
             k: v.to(self.device) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
         }
-    
+
     def _compute_metrics(
         self,
         predictions: np.ndarray,
@@ -355,7 +408,7 @@ class Trainer:
         try:
             roc_auc = roc_auc_score(labels, predictions)
             pr_auc = average_precision_score(labels, predictions)
-        except:
+        except ValueError:
             roc_auc = 0.0
             pr_auc = 0.0
         

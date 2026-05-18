@@ -6,6 +6,7 @@ Tests all 6 real-time innovations from AegisGraph Sentinel 2.0
 Run this script to verify that ALL features are working end-to-end:
 python test_all_innovations_comprehensive.py
 """
+# Working on comprehensive innovation testing
 
 import requests
 import json

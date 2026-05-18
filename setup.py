@@ -3,6 +3,7 @@ Setup script for AegisGraph Sentinel 2.0
 
 This script helps set up the environment and verify installation
 """
+# Working on environment setup and installation
 
 import sys
 import subprocess
