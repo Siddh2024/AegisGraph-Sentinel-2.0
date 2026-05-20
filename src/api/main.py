@@ -755,7 +755,8 @@ async def check_transaction(request: TransactionCheckRequest):
                     fraud_indicators=fraud_indicators,
                 )
                 
-                if should_activate and risk_result['decision'] == 'BLOCK':
+                logic_decision = 'ALLOW' if risk_result['decision'] == 'APPROVE' else risk_result['decision']
+                if should_activate and logic_decision == 'BLOCK':
                     # Activate honeypot
                     honeypot = state.honeypot_manager.activate_honeypot(
                         transaction_id=request.transaction_id,
@@ -784,7 +785,8 @@ async def check_transaction(request: TransactionCheckRequest):
         
         if INNOVATIONS_AVAILABLE and state.blockchain_manager is not None:
             try:
-                if risk_result['decision'] in ['BLOCK', 'REVIEW'] or honeypot_activated:
+                logic_decision = 'ALLOW' if risk_result['decision'] == 'APPROVE' else risk_result['decision']
+                if logic_decision in ['BLOCK', 'REVIEW'] or honeypot_activated:
                     # Extract fraud patterns from explanation
                     fraud_patterns = []
                     if 'mule' in explanation_result['explanation'].lower():
@@ -818,12 +820,23 @@ async def check_transaction(request: TransactionCheckRequest):
         processing_time_ms = (time.time() - start_time) * 1000
         
         # Update statistics
+        internal_decision = risk_result['decision']
+        logic_decision = 'ALLOW' if internal_decision == 'APPROVE' else internal_decision
+        if logic_decision not in state.decisions:
+            logic_decision = 'ALLOW'
         state.requests_processed += 1
-        state.decisions[risk_result['decision']] += 1
+        state.decisions[logic_decision] += 1
         state.total_risk_score += risk_result['risk_score']
         state.total_processing_time += processing_time_ms
         
         # Prepare response with innovation fields
+        decision_map = {
+            'ALLOW': 'approve',
+            'APPROVE': 'approve',
+            'REVIEW': 'review',
+            'BLOCK': 'block',
+        }
+        decision = decision_map.get(internal_decision, internal_decision.lower())
         raw_decision = risk_result['decision']
         decision = {
             'ALLOW': 'approve',

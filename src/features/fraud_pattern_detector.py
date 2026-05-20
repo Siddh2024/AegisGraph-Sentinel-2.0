@@ -15,6 +15,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import networkx as nx
 
+from ..scoring import ScoreCalculator
+
 logger = logging.getLogger(__name__)
 
 
@@ -414,17 +416,17 @@ class FraudPatternDetector:
         
         # Length factor: 3-5 accounts is typical
         length_score = min(len(cycle) / 10.0, 1.0)
-        score += 0.4 * length_score
         
         # Uniformity of amounts
+        uniformity_score = 0.0
         if transactions:
             amounts = [self._txn_value(t, 'amount', 0) for t in transactions]
             cv = np.std(amounts) / (np.mean(amounts) + 1e-6)
             # Low CV (uniform amounts) is suspicious
-            uniformity_score = max(0, 1.0 - cv)
-            score += 0.4 * uniformity_score
+            uniformity_score = max(0.0, 1.0 - cv)
         
         # Transfer velocity
+        velocity_score = 0.0
         if transactions and len(transactions) > 1:
             timestamps = [
                 (datetime.fromisoformat(self._txn_value(t, 'timestamp').isoformat())
@@ -436,10 +438,20 @@ class FraudPatternDetector:
             if len(timestamps) > 1:
                 time_span = (max(timestamps) - min(timestamps)).total_seconds() / 60
                 # Fast transfers (< 30 min for chain) is suspicious
-                velocity_score = max(0, 1.0 - (time_span / 30.0))
-                score += 0.2 * velocity_score
-        
-        return min(score, 1.0)
+                velocity_score = max(0.0, 1.0 - (time_span / 30.0))
+
+        return ScoreCalculator.aggregate_scores(
+            {
+                'length': length_score,
+                'uniformity': uniformity_score,
+                'velocity': velocity_score,
+            },
+            {
+                'length': 0.4,
+                'uniformity': 0.4,
+                'velocity': 0.2,
+            }
+        )
     
     def _score_fan_in_hub(
         self,
@@ -451,21 +463,22 @@ class FraudPatternDetector:
         """Score fan-in hub risk"""
         score = 0.0
         
-        # More diverse sources = more suspicious
         diversity_score = min(unique_sources / 20.0, 1.0)
-        score += 0.5 * diversity_score
-        
-        # Smaller amounts suggest layering
-        if avg_amount < 10000:
-            score += 0.3
-        else:
-            score += 0.1
-        
-        # High transfer count
+        amount_score = 0.3 if avg_amount < 10000 else 0.1
         count_score = min(len(transfers) / 50.0, 1.0)
-        score += 0.2 * count_score
-        
-        return min(score, 1.0)
+
+        return ScoreCalculator.aggregate_scores(
+            {
+                'diversity': diversity_score,
+                'amount': amount_score,
+                'count': count_score,
+            },
+            {
+                'diversity': 0.5,
+                'amount': 0.3,
+                'count': 0.2,
+            }
+        )
     
     def _score_fan_out_hub(
         self,
@@ -477,17 +490,20 @@ class FraudPatternDetector:
         """Score fan-out hub risk"""
         score = 0.0
         
-        # Many unique recipients
-        diversity_score = min(unique_targets / 30.0, 1.0)
-        score += 0.5 * diversity_score
-        
-        # High transfer count
+diversity_score = min(unique_targets / 30.0, 1.0)
         count_score = min(len(transfers) / 60.0, 1.0)
-        score += 0.3 * count_score
-        
-        # Total amount distributed
         total = sum(self._txn_value(t, 'amount', 0) for t in transfers)
-        if total > 1000000:  # Over 1M distributed is suspicious
-            score += 0.2
-        
-        return min(score, 1.0)
+        total_score = 0.2 if total > 1000000 else 0.0
+
+        return ScoreCalculator.aggregate_scores(
+            {
+                'diversity': diversity_score,
+                'count': count_score,
+                'total': total_score,
+            },
+            {
+                'diversity': 0.5,
+                'count': 0.3,
+                'total': 0.2,
+            }
+        )

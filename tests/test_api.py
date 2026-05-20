@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.api.main import app
+from src.api.main import app, state
 
 
 client = TestClient(app)
@@ -134,7 +134,40 @@ class TestFraudCheckEndpoint:
         # Should include behavioral analysis
         assert "factors" in data
         assert "behavioral" in data["factors"]
-    
+
+    def test_internal_approve_maps_to_allow_in_api_response(self, monkeypatch):
+        """Internal APPROVE decision must map back to ALLOW for API stability"""
+        original_decisions = dict(state.decisions)
+        state.decisions = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
+
+        def fake_compute_risk_score(transaction: dict, biometrics: dict = None, **kwargs):
+            return {
+                'risk_score': 0.20,
+                'decision': 'APPROVE',
+                'confidence': 0.85,
+                'breakdown': {'graph': 0.0, 'velocity': 0.0, 'behavior': 0.0, 'entropy': 0.0},
+            }
+
+        monkeypatch.setattr('src.api.main.compute_risk_score', fake_compute_risk_score)
+
+        transaction = {
+            "transaction_id": "test_approve_001",
+            "amount": 100.0,
+            "timestamp": 1234567890.0,
+            "from_account": "user_approve",
+            "to_account": "merchant_approve",
+            "transaction_type": "payment"
+        }
+
+        response = client.post("/api/v1/fraud/check", json=transaction)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["decision"] == "approve"
+        assert state.decisions["ALLOW"] == 1
+
+        state.decisions = original_decisions
+
     def test_invalid_transaction(self):
         """Test with invalid transaction data"""
         transaction = {

@@ -22,6 +22,7 @@ from ..features.velocity_calculator import VelocityCalculator, Transaction
 from ..features.behavioral_biometrics import analyze_keystroke_data
 from ..features.entropy_calculator import compute_entropy_risk_score
 from ..utils.helpers import load_thresholds
+from ..scoring import ThresholdConfig, RiskScorer as CentralRiskScorer
 
 
 class RiskScorer:
@@ -79,6 +80,23 @@ class RiskScorer:
             self.lateral_movement_mult = 3.0
             self.lateral_movement_risk_increment = 0.25
         
+        thresholds = {
+            'allow': self.threshold_allow,
+            'review': self.threshold_review,
+            'block': self.threshold_block,
+        }
+        self.threshold_config = ThresholdConfig(thresholds=thresholds)
+        self.component_weights = {
+            'graph': self.w_graph,
+            'velocity': self.w_velocity,
+            'behavior': self.w_behavior,
+            'entropy': self.w_entropy,
+        }
+        self.central_scorer = CentralRiskScorer(
+            threshold_config=self.threshold_config,
+            component_weights=self.component_weights,
+        )
+
         # Feature calculators
         self.velocity_calculator = VelocityCalculator()
     
@@ -142,24 +160,18 @@ class RiskScorer:
         else:
             risk_components['entropy'] = 0.5
         
-        # Weighted combination
-        final_risk = (
-            self.w_graph * risk_components['graph'] +
-            self.w_velocity * risk_components['velocity'] +
-            self.w_behavior * risk_components['behavior'] +
-            self.w_entropy * risk_components['entropy']
-        )
-        
-        # Decision
-        decision = self._make_decision(final_risk)
-        
-        # Confidence (based on variance of components)
-        confidence = self._compute_confidence(risk_components)
-        
+        component_scores = {
+            'graph': risk_components['graph'],
+            'velocity': risk_components['velocity'],
+            'behavior': risk_components['behavior'],
+            'entropy': risk_components['entropy'],
+        }
+        assessment = self.central_scorer.assess(component_scores)
+
         return {
-            'risk_score': float(final_risk),
-            'decision': decision,
-            'confidence': float(confidence),
+            'risk_score': float(assessment.overall_score),
+            'decision': assessment.decision,
+            'confidence': float(assessment.confidence),
             'breakdown': {k: float(v) for k, v in risk_components.items()},
         }
     
@@ -534,27 +546,40 @@ def compute_risk_score(
     
     entropy_risk = min(entropy_risk, 1.0)
     breakdown['entropy'] = entropy_risk
-    
-    # Combine risks with weights
-    risk_score = (
-        0.50 * graph_risk +
-        0.20 * velocity_risk +
-        0.20 * behavior_risk +
-        0.10 * entropy_risk
+
+    try:
+        threshold_data = load_thresholds('config/thresholds.yaml', validate=True)
+        rs = threshold_data.get('risk_scoring', {})
+        thresholds = {
+            'allow': rs.get('allow', 0.50),
+            'review': rs.get('review', 0.70),
+            'block': rs.get('block', 0.90),
+        }
+    except Exception:
+        thresholds = state.config.get('risk_scoring', {}).get('thresholds', {
+            'allow': 0.50,
+            'review': 0.70,
+            'block': 0.90,
+        })
+
+    component_weights = {
+        'graph': 0.50,
+        'velocity': 0.20,
+        'behavior': 0.20,
+        'entropy': 0.10,
+    }
+    central_thresholds = ThresholdConfig(thresholds=thresholds)
+    central_scorer = CentralRiskScorer(
+        threshold_config=central_thresholds,
+        component_weights=component_weights,
     )
-    
-    # Make decision
-    if risk_score >= 0.70:
-        decision = 'BLOCK'
-    elif risk_score >= 0.40:
-        decision = 'REVIEW'
-    else:
-        decision = 'ALLOW'
+
+    assessment = central_scorer.assess(breakdown)
     
     return {
-        'risk_score': risk_score,
-        'decision': decision,
-        'confidence': 0.85,
+        'risk_score': assessment.overall_score,
+        'decision': assessment.decision,
+        'confidence': assessment.confidence,
         'breakdown': breakdown,
         'lateral_movement_detected': lateral_movement_detected,
         'lateral_movement_reason': lateral_movement_reason,
