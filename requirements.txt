@@ -73,3 +73,7 @@ ipywidgets>=8.1.0
 
 # Data Generation
 faker>=19.12.0
+
+# Audio Analysis (for Voice Stress Analysis - Innovation 5)
+librosa>=0.10.0
+soundfile>=0.12.1
