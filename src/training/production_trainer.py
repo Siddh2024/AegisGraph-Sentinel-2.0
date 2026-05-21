@@ -31,58 +31,7 @@ from sklearn.metrics import (
 logger = logging.getLogger(__name__)
 
 
-class FocalLoss(nn.Module):
-    """
-    Focal Loss for class imbalance (fraud detection)
-    
-    L = -α * (1 - p_t)^γ * log(p_t)
-    
-    where:
-    - α: class weight (higher for rare class)
-    - γ: focusing parameter (higher = more focus on hard examples)
-    - p_t: model confidence
-    
-    Reference: Lin et al., "Focal Loss for Dense Object Detection", ICCV 2017
-    """
-    
-    def __init__(self, alpha: float = 0.25, gamma: float = 2.0):
-        """
-        Args:
-            alpha: Weight for positive class (fraud)
-            gamma: Focusing parameter
-        """
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-    
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            logits: Model output probabilities [batch_size, 1]
-            targets: Binary labels [batch_size, 1]
-
-        Returns:
-            Scalar loss
-        """
-        # Keep the target tensor aligned with the model output shape and dtype.
-        targets = targets.to(dtype=logits.dtype).reshape_as(logits)
-
-        # Clip probabilities to avoid log(0)
-        epsilon = 1e-7
-        probs_clipped = torch.clamp(logits, epsilon, 1 - epsilon)
-        
-        # Focal weight
-        focal_weight = (1 - probs_clipped) ** self.gamma
-        
-        # Cross entropy loss on probabilities
-        ce_loss = F.binary_cross_entropy(
-            probs_clipped.squeeze(), targets.squeeze(), reduction='none'
-        )
-        
-        # Apply focal weight
-        focal_loss = self.alpha * focal_weight.squeeze() * ce_loss
-        
-        return focal_loss.mean()
+from .losses import FocalLoss
 
 
 @dataclass
