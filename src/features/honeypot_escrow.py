@@ -29,6 +29,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from enum import Enum
 import uuid
+import secrets
 import networkx as nx
 
 
@@ -175,8 +176,8 @@ class HoneypotEscrowManager:
         Returns:
             HoneypotTransaction object
         """
-        honeypot_id = f"HP_{uuid.uuid4().hex[:12].upper()}"
-        escrow_account = f"{self.escrow_prefix}{uuid.uuid4().hex[:16].upper()}"
+        honeypot_id = f"HP_{secrets.token_hex(6).upper()}"
+        escrow_account = f"{self.escrow_prefix}{secrets.token_hex(8).upper()}"
         
         activation_time = datetime.now()
         auto_release_time = activation_time + timedelta(hours=self.auto_release_hours)
@@ -433,7 +434,7 @@ class HoneypotEscrowManager:
     ) -> Dict:
         """Generate police alert for withdrawal attempt"""
         alert = {
-            'alert_id': f"ALERT_{uuid.uuid4().hex[:8].upper()}",
+            'alert_id': f"ALERT_{secrets.token_hex(4).upper()}",
             'timestamp': datetime.now().isoformat(),
             'priority': 'CRITICAL',
             'honeypot_id': honeypot.honeypot_id,

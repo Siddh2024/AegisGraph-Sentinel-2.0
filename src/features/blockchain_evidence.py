@@ -36,6 +36,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import uuid
+import secrets
 
 
 @dataclass
@@ -324,7 +325,7 @@ class BlockchainEvidenceManager:
         explanation_hash = hashlib.sha256(explanation.encode()).hexdigest()
         
         # Evidence record
-        evidence_id = f"EV_{uuid.uuid4().hex[:12].upper()}"
+        evidence_id = f"EV_{secrets.token_hex(6).upper()}"
         detection_timestamp = datetime.now().isoformat() + 'Z'
         
         evidence_data = {
