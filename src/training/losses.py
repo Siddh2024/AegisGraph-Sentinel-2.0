@@ -63,6 +63,7 @@ class FocalLoss(nn.Module):
             p = inputs
         
         # Compute focal loss
+        targets = targets.view_as(p).float()
         ce_loss = F.binary_cross_entropy(p, targets, reduction='none')
         p_t = p * targets + (1 - p) * (1 - targets)
         focal_weight = (1 - p_t) ** self.gamma
@@ -114,6 +115,7 @@ class WeightedBCELoss(nn.Module):
         Returns:
             Weighted BCE loss
         """
+        targets = targets.view_as(inputs).float()
         return F.binary_cross_entropy_with_logits(
             inputs,
             targets,

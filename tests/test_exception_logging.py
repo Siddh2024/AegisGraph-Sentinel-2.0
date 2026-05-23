@@ -254,7 +254,7 @@ class TestApiIntegration:
 
     def test_http_exception_standardized_json(self):
         client = TestClient(app)
-        response = client.post("/api/v1/explain", json={})
+        response = client.post("/api/v1/explain", json={"decision": "BLOCK", "risk_score": 0.9})
         assert response.status_code in (503, 500)
         body = response.json()
         assert "error" in body

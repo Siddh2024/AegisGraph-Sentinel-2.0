@@ -475,41 +475,6 @@ except (ImportError, SyntaxError) as e:
         }
 
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="AegisGraph Sentinel 2.0",
-    description="Real-Time Cross-Channel Mule Account Detection & Neutralization API",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
-
-# CORS middleware
-#
-# CWE-942 prevention: `allow_origins=["*"]` combined with
-# `allow_credentials=True` makes Starlette reflect the request's Origin
-# header back, effectively allowing credentialed cross-origin requests
-# from any site. Read the allowed origins from AEGIS_ALLOWED_ORIGINS
-# (comma-separated) instead, defaulting to local dev URLs.
-_default_origins = "http://localhost:3000,http://localhost:8501,http://127.0.0.1:8501"
-ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.getenv("AEGIS_ALLOWED_ORIGINS", _default_origins).split(",")
-    if o.strip()
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
-    max_age=600,
-)
-
-register_exception_handlers(app)
-register_observability_middleware(app)
-
 # Global state
 class AppState:
     """Application state"""
@@ -540,11 +505,18 @@ class AppState:
 state = AppState()
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize service on startup"""
-    _startup_logger = get_logger("api.startup")
-    _startup_logger.info("AegisGraph Sentinel 2.0 starting up", event_type="startup_begin")
+async def _honeypot_auto_release_loop(interval_seconds: int = 60):
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if state.honeypot_manager is not None:
+            try:
+                state.honeypot_manager.check_auto_release()
+            except Exception as exc:
+                _api_logger.warning(
+                    f"Honeypot auto-release check failed: {exc}",
+                    event_type="honeypot_auto_release_error",
+                )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -552,6 +524,7 @@ async def lifespan(app: FastAPI):
     Application lifespan. Initialises services and config on startup,
     tracks background tasks, and cancels them cleanly on shutdown.
     """
+    _startup_logger = get_logger("api.startup")
     # Startup
     print("=" * 80)
     print("AegisGraph Sentinel 2.0 - Starting up...")
@@ -594,8 +567,8 @@ async def lifespan(app: FastAPI):
                     "Possible file tampering or corrupted artifact. Aborting startup."
                 )
             
-            with open(graph_path, "rb") as f:
-                state.transaction_graph = pickle.load(f)
+            import networkx as nx
+            state.transaction_graph = nx.read_graphml(graph_path)
             _startup_logger.info(
                 "Loaded transaction graph",
                 event_type="graph_loaded",
@@ -604,9 +577,6 @@ async def lifespan(app: FastAPI):
                     "edges": state.transaction_graph.number_of_edges(),
                 },
             )
-            import networkx as nx
-            state.transaction_graph = nx.read_graphml(graph_path)
-            
             print(f"✓ Loaded verified transaction graph: {state.transaction_graph.number_of_nodes()} nodes, "
                   f"{state.transaction_graph.number_of_edges()} edges")
             state.graph_loaded = True
@@ -785,52 +755,14 @@ app.add_middleware(
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["100/minute"],
-    default_limits_exempt_when=lambda request: request.method == "OPTIONS",
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Global state
-class AppState:
-    """Application state"""
-    def __init__(self):
-        self.start_time = time.time()
-        self.requests_processed = 0
-        self.decisions = {"ALLOW": 0, "REVIEW": 0, "BLOCK": 0}
-        self.total_risk_score = 0.0
-        self.total_processing_time = 0.0
-        self.model_loaded = False
-        self.config = {}
-        # Graph-based fraud detection
-        self.transaction_graph = None
-        self.fraud_chains = []
-        self.mule_accounts = {'mule_acc_001', 'mule_acc_002', 'test_merchant', 'suspect_account_1', 'fraud_wallet_xyz'}
-        self.account_profiles = {}
-        self.graph_loaded = True  # Enable for demo
-        # Lateral movement detection - rolling betweenness centrality baseline
-        self.centrality_baseline = {}  # {account_id: [centrality_history]}
-        self.centrality_window_size = 10  # Track last 10 measurements
-        # Innovation managers
-        self.voice_analyzer = None
-        self.mule_scorer = None
-        self.honeypot_manager = None
-        self.blockchain_manager = None
-        self.aegis_oracle = None  # Explainability engine
-        
-state = AppState()
+register_exception_handlers(app)
+register_observability_middleware(app)
 
-async def _honeypot_auto_release_loop(interval_seconds: int = 60):
-    while True:
-        await asyncio.sleep(interval_seconds)
-        if state.honeypot_manager is not None:
-            try:
-                state.honeypot_manager.check_auto_release()
-            except Exception as exc:
-                _api_logger.warning(
-                    f"Honeypot auto-release check failed: {exc}",
-                    event_type="honeypot_auto_release_error",
-                )
 
 
 @app.get("/", tags=["General"])
@@ -1303,7 +1235,7 @@ if os.getenv("DEBUG", "false").lower() == "true":
     summary="Check multiple transactions",
     description="Batch processing of multiple transactions for fraud detection"
 )
-def check_batch_transactions(request: BatchTransactionRequest):
+async def check_batch_transactions(request: BatchTransactionRequest):
     """
     Check multiple transactions in batch
     
@@ -1318,7 +1250,7 @@ def check_batch_transactions(request: BatchTransactionRequest):
     for txn_request in request.transactions:
         try:
             # Process each transaction
-            result = check_transaction(txn_request)
+            result = await check_transaction(txn_request)
             results.append(result)
             stats[result.decision.upper()] += 1
         except Exception as e:

@@ -443,11 +443,8 @@ def compute_risk_score(
                             event_type="graph_pattern",
                             metadata={"pattern": "chain", "descendants": len(descendants)},
                         )
-            except:
-                        print(f"⚠️ Chain pattern: {source_account} feeds into {len(descendants)} accounts")
             except Exception as e:
-                logger.error(f"Error: {e}")
-                pass
+                logger.error(f"Error in chain pattern analysis: {e}")
             
             # Betweenness centrality (key intermediary in network)
             try:
@@ -459,11 +456,8 @@ def compute_risk_score(
                         event_type="graph_pattern",
                         metadata={"pattern": "high_centrality"},
                     )
-            except:
-                    print(f"⚠️ High centrality: {source_account} is a network hub")
             except Exception as e:
-                logger.error(f"Error: {e}")
-                pass
+                logger.error(f"Error in centrality analysis: {e}")
     
     graph_risk = min(graph_risk, 1.0)
     breakdown['graph'] = graph_risk
