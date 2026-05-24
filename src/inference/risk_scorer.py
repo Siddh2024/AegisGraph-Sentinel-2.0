@@ -483,16 +483,27 @@ def compute_risk_score(
                     baseline_avg = np.mean(baseline_history)
                     baseline_std = np.std(baseline_history) if len(baseline_history) > 1 else 0.001
                     
-                    # Spike detection: configurable thresholds (from thresholds.yaml)
+                    # Spike detection using module-level constants.
+                    # self.lateral_movement_* cannot be used here because this is
+                    # a module-level function, not a method of RiskScorer.
+                    # Constants mirror the defaults in RiskScorer.__init__ and
+                    # thresholds.yaml (fix for Issue #131).
+                    _LATERAL_STD_MULTIPLIER = 2.0   # σ multiplier
+                    _LATERAL_MULT_FACTOR    = 3.0   # min multiplier over baseline avg
+                    _LATERAL_RISK_INCREMENT = 0.25  # graph_risk bump
+
                     spike_threshold = max(
-                        baseline_avg + self.lateral_movement_std * baseline_std,
-                        baseline_avg * self.lateral_movement_mult
+                        baseline_avg + _LATERAL_STD_MULTIPLIER * baseline_std,
+                        baseline_avg * _LATERAL_MULT_FACTOR,
                     )
-                    
+
                     if current_score > spike_threshold and baseline_avg > 0:
                         lateral_movement_detected = True
                         lateral_movement_reason = f"Lateral movement detected: {source_account} betweenness centrality spiked from baseline {baseline_avg:.4f} to {current_score:.4f} (MITRE ATT&CK TA0008)"
-                        graph_risk += self.lateral_movement_risk_increment
+
+                        graph_risk += _LATERAL_RISK_INCREMENT
+
+                       
                         _inference_logger.warning(
                             f"Lateral movement detected for {source_account}",
                             event_type="lateral_movement",
