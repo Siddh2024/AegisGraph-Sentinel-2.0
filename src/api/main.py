@@ -1833,6 +1833,19 @@ async def export_legal_evidence(request: LegalExportRequest):
         raise HTTPException(status_code=503, detail="Blockchain system not available")
     
     try:
+        expected_token_hash = os.getenv("AEGIS_LEGAL_EXPORT_TOKEN_HASH")
+        if not expected_token_hash:
+            raise HTTPException(
+                status_code=503,
+                detail="Legal export authorization is not configured",
+            )
+
+        provided_token_hash = hashlib.sha256(
+            request.authorization_token.encode("utf-8")
+        ).hexdigest()
+        if provided_token_hash != expected_token_hash:
+            raise HTTPException(status_code=403, detail="Unauthorized legal export request")
+
         result = state.blockchain_manager.export_for_legal_proceedings(
             evidence_id=request.evidence_id,
             case_number=request.case_number,
@@ -1851,7 +1864,8 @@ async def export_legal_evidence(request: LegalExportRequest):
             export_timestamp=result['export_timestamp'],
             authorized_by=result['authorized_by'],
         )
-    
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Evidence export failed: {str(e)}")
 
