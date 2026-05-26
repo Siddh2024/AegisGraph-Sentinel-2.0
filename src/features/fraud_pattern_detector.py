@@ -12,7 +12,7 @@ import logging
 import numpy as np
 from typing import Dict, List, Set, Tuple
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import networkx as nx
 
 from ..scoring import ScoreCalculator
@@ -40,6 +40,20 @@ class FraudPatternDetector:
         if isinstance(txn, dict):
             return txn.get(field, default)
         return getattr(txn, field, default)
+
+    def _normalize_timestamp(self, value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                return None
+        return None
     
     def detect_mule_rings(
         self,
@@ -226,15 +240,13 @@ class FraudPatternDetector:
         time_window = timedelta(hours=time_window_hours)
         account_windows = defaultdict(list)
         
-        # Sort by timestamp
-        sorted_txns = sorted(
-            transactions,
-            key=lambda x: (
-                datetime.fromisoformat(self._txn_value(x, 'timestamp').isoformat())
-                if isinstance(self._txn_value(x, 'timestamp'), datetime)
-                else self._txn_value(x, 'timestamp')
-            )
-        )
+        normalized_txns = []
+        for txn in transactions:
+            ts = self._normalize_timestamp(self._txn_value(txn, 'timestamp'))
+            if ts is not None:
+                normalized_txns.append((ts, txn))
+
+        sorted_txns = [txn for _, txn in sorted(normalized_txns, key=lambda item: item[0])]
         
         for txn in sorted_txns:
             account = self._txn_value(txn, 'source_account')
@@ -292,37 +304,34 @@ class FraudPatternDetector:
         # account creation, device linking, etc.
         # For now, simple implementation:
         
-        # Sort transactions by timestamp
-        sorted_txns = sorted(
-            transactions,
-            key=lambda x: (
-                datetime.fromisoformat(self._txn_value(x, 'timestamp').isoformat())
-                if isinstance(self._txn_value(x, 'timestamp'), datetime)
-                else self._txn_value(x, 'timestamp')
-            )
-        )
-        
-        # Look for rapid sequences
-        for i, txn in enumerate(sorted_txns[:-2]):
+        normalized_txns = []
+        for txn in transactions:
+            ts = self._normalize_timestamp(self._txn_value(txn, 'timestamp'))
+            if ts is not None:
+                normalized_txns.append((ts, txn))
+
+        sorted_txns = [txn for _, txn in sorted(normalized_txns, key=lambda item: item[0])]
+
+        transactions_by_source = defaultdict(list)
+        for ts, txn in normalized_txns:
             source = self._txn_value(txn, 'source_account')
-            next_txns = [t for t in sorted_txns[i+1:] if self._txn_value(t, 'source_account') == source]
-            
-            if len(next_txns) >= 2:
-                # Check timing
-                ts1_value = self._txn_value(txn, 'timestamp')
-                ts2_value = self._txn_value(next_txns[0], 'timestamp')
-                ts1 = datetime.fromisoformat(ts1_value.isoformat()) if isinstance(ts1_value, datetime) else ts1_value
-                ts2 = datetime.fromisoformat(ts2_value.isoformat()) if isinstance(ts2_value, datetime) else ts2_value
-                
+            if source:
+                transactions_by_source[source].append((ts, txn))
+
+        # Look for rapid sequences using per-account time order
+        for source, source_txns in transactions_by_source.items():
+            if len(source_txns) >= 3:
+                source_txns.sort(key=lambda item: item[0])
+                ts1 = source_txns[0][0]
+                ts2 = source_txns[1][0]
                 time_diff = (ts2 - ts1).total_seconds() / 3600  # hours
-                
-                if time_diff < 1:  # Rapid sequence
-                    chain_score = min(len(next_txns) / 10.0, 1.0)
-                    
+
+                if time_diff < 1:
+                    chain_score = min(len(source_txns) / 10.0, 1.0)
                     chains.append({
                         'type': 'TEMPORAL_FRAUD_CHAIN',
                         'account': source,
-                        'num_rapid_transfers': len(next_txns),
+                        'num_rapid_transfers': len(source_txns) - 1,
                         'timespan_hours': time_diff,
                         'risk_score': chain_score,
                     })
@@ -386,10 +395,8 @@ class FraudPatternDetector:
         
         timestamps = []
         for txn in transactions:
-            ts = self._txn_value(txn, 'timestamp')
-            if isinstance(ts, str):
-                ts = datetime.fromisoformat(ts)
-            if ts:
+            ts = self._normalize_timestamp(self._txn_value(txn, 'timestamp'))
+            if ts is not None:
                 timestamps.append(ts)
         
         if len(timestamps) < 2:
@@ -428,13 +435,12 @@ class FraudPatternDetector:
         # Transfer velocity
         velocity_score = 0.0
         if transactions and len(transactions) > 1:
-            timestamps = [
-                (datetime.fromisoformat(self._txn_value(t, 'timestamp').isoformat())
-                 if isinstance(self._txn_value(t, 'timestamp'), datetime)
-                 else self._txn_value(t, 'timestamp'))
-                for t in transactions if self._txn_value(t, 'timestamp')
-            ]
-            
+            timestamps = []
+            for t in transactions:
+                ts = self._normalize_timestamp(self._txn_value(t, 'timestamp'))
+                if ts is not None:
+                    timestamps.append(ts)
+
             if len(timestamps) > 1:
                 time_span = (max(timestamps) - min(timestamps)).total_seconds() / 60
                 # Fast transfers (< 30 min for chain) is suspicious
