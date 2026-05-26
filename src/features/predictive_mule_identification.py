@@ -30,6 +30,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+import ipaddress
 
 
 @dataclass
@@ -297,16 +298,16 @@ class PredictiveMuleScorer:
         Score geographic mismatch
         IP location vs stated address
         """
-        # Simple heuristic: check if IP is VPN/proxy
         ip = account_data.ip_address
-        
-        # Removed RFC 1918 private IPs (caused false positives for NAT users)
-        # TODO: Implement proper GeoIP or threat intelligence lookup for VPN/proxy detection
-        suspicious_patterns = []
-        
-        if any(ip.startswith(p) for p in suspicious_patterns):
+
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+        except ValueError:
             return 70.0
-        
+
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_reserved or ip_obj.is_multicast:
+            return 70.0
+
         # Check same IP multiple accounts
         same_ip_count = features['same_ip_count']
         if same_ip_count > 5:
