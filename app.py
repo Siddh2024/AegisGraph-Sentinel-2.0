@@ -889,21 +889,40 @@ elif page == "📊 Risk Analytics":
         st.session_state.risk_tps_history = list(np.random.normal(loc=12.5, scale=2.5, size=20).clip(1, 100))
     if 'risk_time_history' not in st.session_state:
         st.session_state.risk_time_history = list(pd.date_range(end=pd.Timestamp.now(), periods=20, freq='2S'))
+    if 'fraud_risk_score_history' not in st.session_state:
+        st.session_state.fraud_risk_score_history = list(np.random.normal(loc=30, scale=5.0, size=20).clip(0, 100))
         
     if is_live:
         # Generate new data point
         new_latency = np.random.normal(loc=avg_time, scale=6.0)
         new_tps = np.random.normal(loc=15.0 if flagged > 0 else 10.0, scale=3.0)
         
+        # Calculate new risk score based on real-time alerts
+        new_risk = np.random.normal(loc=30, scale=5.0)
+        if 'realtime_alerts' in st.session_state and len(st.session_state.realtime_alerts) > 0:
+            latest_alert = st.session_state.realtime_alerts[0]
+            # Link to alert severity if fresh (within 3 seconds)
+            time_diff = (pd.Timestamp.now() - latest_alert['time']).total_seconds()
+            if time_diff < 3:
+                if latest_alert['severity'] == "Critical":
+                    new_risk = np.random.normal(loc=95, scale=2.0)
+                elif latest_alert['severity'] == "High":
+                    new_risk = np.random.normal(loc=82, scale=4.0)
+                elif latest_alert['severity'] == "Medium":
+                    new_risk = np.random.normal(loc=65, scale=6.0)
+        new_risk = max(0, min(100, new_risk))
+        
         st.session_state.risk_latency_history.append(new_latency)
         st.session_state.risk_tps_history.append(new_tps)
         st.session_state.risk_time_history.append(pd.Timestamp.now())
+        st.session_state.fraud_risk_score_history.append(new_risk)
         
         # Keep only last 20
         if len(st.session_state.risk_latency_history) > 20:
             st.session_state.risk_latency_history.pop(0)
             st.session_state.risk_tps_history.pop(0)
             st.session_state.risk_time_history.pop(0)
+            st.session_state.fraud_risk_score_history.pop(0)
 
     # Top metrics display
     col1, col2, col3, col4 = st.columns(4)
@@ -962,6 +981,63 @@ elif page == "📊 Risk Analytics":
         fig_lat.update_yaxes(title_text="TPS (Req/Sec)", secondary_y=True, showgrid=False)
         
         st.plotly_chart(fig_lat, use_container_width=True)
+        
+        st.subheader("🌐 Global Fraud Risk Index")
+        st.markdown("**Real-time aggregate risk score driven by live alert severities**")
+        
+        # Build Risk Trend Chart
+        risk_df = pd.DataFrame({
+            'Time': st.session_state.risk_time_history,
+            'RiskScore': st.session_state.fraud_risk_score_history
+        })
+        
+        # Color line based on latest risk score
+        current_risk = risk_df['RiskScore'].iloc[-1]
+        if current_risk >= 80:
+            line_color = '#ef4444'
+            fill_color = 'rgba(239, 68, 68, 0.2)'
+        elif current_risk >= 50:
+            line_color = '#f59e0b'
+            fill_color = 'rgba(245, 158, 11, 0.2)'
+        else:
+            line_color = '#10b981'
+            fill_color = 'rgba(16, 185, 129, 0.2)'
+            
+        fig_risk = go.Figure()
+        
+        # Gradient area fill
+        fig_risk.add_trace(go.Scatter(
+            x=risk_df['Time'], 
+            y=risk_df['RiskScore'],
+            fill='tozeroy',
+            mode='lines',
+            line=dict(color=line_color, width=3),
+            fillcolor=fill_color,
+            name="Risk Index"
+        ))
+        
+        # Add spike markers for high risk
+        high_risk_points = risk_df[risk_df['RiskScore'] >= 80]
+        if not high_risk_points.empty:
+            fig_risk.add_trace(go.Scatter(
+                x=high_risk_points['Time'],
+                y=high_risk_points['RiskScore'],
+                mode='markers',
+                marker=dict(color='#ef4444', size=10, symbol='diamond-open', line=dict(width=2, color='#ef4444')),
+                name="Critical Anomaly"
+            ))
+            
+        fig_risk.update_layout(
+            height=200,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            hovermode='x unified',
+            showlegend=False,
+            yaxis=dict(range=[0, 100], title="Risk Score", gridcolor='rgba(255,255,255,0.1)'),
+            xaxis=dict(showgrid=False)
+        )
+        st.plotly_chart(fig_risk, use_container_width=True)
         
         st.subheader("🧠 AI Decision Breakdown Engine")
         
