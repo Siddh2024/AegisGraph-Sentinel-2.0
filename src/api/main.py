@@ -106,6 +106,15 @@ def _decision_to_api_value(decision: object) -> str:
     return _API_DECISION_MAP[_normalize_decision(decision)]
 
 
+def _raise_internal_server_error(operation: str, exc: Exception) -> None:
+    _api_logger.error(
+        f"{operation} failed: {exc}",
+        event_type="api_internal_error",
+        metadata={"operation": operation, "error_type": type(exc).__name__},
+    )
+    raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
 def _require_honeypot_admin(x_honeypot_token: Optional[str]) -> None:
     expected_hash = os.getenv("AEGIS_HONEYPOT_ADMIN_TOKEN_HASH")
     if not expected_hash:
@@ -1338,8 +1347,10 @@ async def check_transaction(request: TransactionCheckRequest):
 
         return response
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid fraud analysis request") from exc
+    except Exception as exc:
+        _raise_internal_server_error("Fraud analysis", exc)
 
 
 @app.post(
@@ -1405,12 +1416,10 @@ async def explain_transaction(request: ExplainRequest):
         
         return explanation
         
-    except Exception as e:
-        _api_logger.error(
-            f"Explanation error: {e}",
-            event_type="explain_error",
-        )
-        raise HTTPException(status_code=500, detail=f"Explain error: {str(e)}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid explainability request") from exc
+    except Exception as exc:
+        _raise_internal_server_error("Explainability", exc)
 
 
 # Enhanced Aegis-Oracle endpoint
@@ -1451,8 +1460,10 @@ async def oracle_explain_detailed(request: OracleExplainRequest):
             'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         }
         
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={'error': str(e)})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid oracle explainability request") from exc
+    except Exception as exc:
+        _raise_internal_server_error("Oracle explainability", exc)
 
 # DEBUG only: manually activate a honeypot via API.
 # This endpoint is ONLY registered when DEBUG env var is set to "true".
@@ -1479,7 +1490,7 @@ if settings.runtime.debug:
             )
             return {'honeypot_id': hp.honeypot_id, 'status': hp.status.value}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            _raise_internal_server_error("Debug honeypot activation", e)
 @app.post(
     "/api/v1/fraud/batch",
     response_model=BatchTransactionResponse,
@@ -1627,8 +1638,10 @@ def analyze_voice(request: VoiceAnalysisRequest):
             recommended_action=result['recommended_action'],
             processing_time_ms=processing_time_ms,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Voice analysis failed: {str(e)}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid voice analysis request") from exc
+    except Exception as exc:
+        _raise_internal_server_error("Voice analysis", exc)
     finally:
         # This guarantees the file is deleted even if the analysis crashes
         if tmp_path:
@@ -1691,8 +1704,10 @@ def score_account_opening(request: AccountOpeningRequest):
             processing_time_ms=processing_time_ms,
         )
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Account scoring failed: {str(e)}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid account scoring request") from exc
+    except Exception as exc:
+        _raise_internal_server_error("Account scoring", exc)
 
 
 # Alias endpoint for mule assessment
@@ -1756,8 +1771,8 @@ async def list_active_honeypots(
             total_recovered_today=stats.get('recovered_today', 0.0),
         )
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get honeypot list: {str(e)}")
+    except Exception as exc:
+        _raise_internal_server_error("Honeypot list retrieval", exc)
 
 
 @app.get(
@@ -1793,8 +1808,8 @@ async def get_honeypot_stats(
             avg_time_to_arrest_minutes=stats['avg_time_to_arrest_minutes'],
         )
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")
+    except Exception as exc:
+        _raise_internal_server_error("Honeypot statistics retrieval", exc)
 
 
 @app.post(
@@ -1839,8 +1854,8 @@ async def seal_evidence(request: BlockchainSealRequest):
             validators=result.validator_signatures,
         )
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Evidence sealing failed: {str(e)}")
+    except Exception as exc:
+        _raise_internal_server_error("Evidence sealing", exc)
 
 
 @app.get(
@@ -1877,8 +1892,8 @@ async def verify_evidence(evidence_id: str, block_number: int):
             verification_details=result.get('details', {}),
         )
     
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
+    except Exception as exc:
+        _raise_internal_server_error("Evidence verification", exc)
 
 
 @app.post(
@@ -1926,8 +1941,8 @@ async def export_legal_evidence(request: LegalExportRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Evidence export failed: {str(e)}")
+    except Exception as exc:
+        _raise_internal_server_error("Evidence export", exc)
 
 
 def main():
