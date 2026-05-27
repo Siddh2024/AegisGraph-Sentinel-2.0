@@ -148,6 +148,21 @@ st.markdown("""
         background: linear-gradient(135deg, #14b8a6 0%, #f59e0b 100%) !important;
     }
     
+    button[kind="secondary"] {
+        background: rgba(30, 41, 59, 0.7) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 10px !important;
+        color: white !important;
+        font-weight: 600 !important;
+        padding: 10px 24px !important;
+        transition: all 0.3s ease !important;
+    }
+    button[kind="secondary"]:hover {
+        background: rgba(16, 185, 129, 0.2) !important;
+        border-color: #10b981 !important;
+        transform: scale(1.03);
+    }
+    
     /* Navigation Sidebar Enhancements */
     [data-testid="stSidebar"] {
         background-color: #0b0f19 !important;
@@ -917,12 +932,12 @@ elif page == "📊 Risk Analytics":
         st.session_state.risk_time_history.append(pd.Timestamp.now())
         st.session_state.fraud_risk_score_history.append(new_risk)
         
-        # Keep only last 20
+        # Keep only last 20 using slice reassignment (faster and safer in Streamlit)
         if len(st.session_state.risk_latency_history) > 20:
-            st.session_state.risk_latency_history.pop(0)
-            st.session_state.risk_tps_history.pop(0)
-            st.session_state.risk_time_history.pop(0)
-            st.session_state.fraud_risk_score_history.pop(0)
+            st.session_state.risk_latency_history = st.session_state.risk_latency_history[-20:]
+            st.session_state.risk_tps_history = st.session_state.risk_tps_history[-20:]
+            st.session_state.risk_time_history = st.session_state.risk_time_history[-20:]
+            st.session_state.fraud_risk_score_history = st.session_state.fraud_risk_score_history[-20:]
 
     # Top metrics display
     col1, col2, col3, col4 = st.columns(4)
@@ -1066,7 +1081,7 @@ elif page == "📊 Risk Analytics":
             y=['Anomaly Contribution'] * len(values), 
             orientation='h', 
             color=categories,
-            color_discrete_sequence=['#ff4d4d', '#ffaa00', '#00ccff', '#cc33ff'],
+            color_discrete_sequence=['#ef4444', '#f59e0b', '#0ea5e9', '#8b5cf6'],
             labels={'x': 'Risk Component Contribution', 'y': ''}
         )
         fig_bar.update_layout(
@@ -1142,6 +1157,26 @@ elif page == "📊 Risk Analytics":
             # Clear after display or on next run
             st.session_state.action_taken = None
 
+        # Calculate dynamic metrics if alerts exist
+        active_threats = 0
+        critical_incidents = 0
+        if 'realtime_alerts' in st.session_state:
+            active_threats = len(st.session_state.realtime_alerts)
+            critical_incidents = sum(1 for a in st.session_state.realtime_alerts if a['severity'] == 'Critical')
+            
+    st.markdown("---")
+    
+    st.subheader("📈 Realtime Alert Analytics")
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    with summary_col1:
+        st.metric("Active Threats", f"{active_threats if 'realtime_alerts' in st.session_state else 12}", "+2 this hour")
+    with summary_col2:
+        st.metric("Critical Incidents", f"{critical_incidents if 'realtime_alerts' in st.session_state else 3}", "Immediate Action Required" if critical_incidents > 0 else "Stable", delta_color="inverse")
+    with summary_col3:
+        st.metric("Avg Resolution Time", "4.2m", "-30s")
+    with summary_col4:
+        st.metric("False Positive Rate", "1.8%", "-0.2%")
+        
     st.markdown("---")
     
     with st.expander("🚨 Realtime Fraud Alert Center", expanded=True):
