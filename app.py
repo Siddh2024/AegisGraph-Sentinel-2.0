@@ -30,6 +30,11 @@ import os
 # API Configuration
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
+
+def _accessible_status(emoji: str, label: str) -> str:
+    """Return a visual status with an adjacent plain-text equivalent."""
+    return f"{emoji} {label} ({label})"
+
 # Custom CSS
 st.markdown("""
     <style>
@@ -187,15 +192,16 @@ with st.sidebar:
         response = requests.get(f"{API_URL}/health", timeout=2)
         if response.status_code == 200:
             health = response.json()
-            st.success("✅ API Online")
+            st.success(_accessible_status("✅", "API Online"))
             st.metric("Uptime", f"{int(health.get('uptime_seconds', 0))}s")
             mode = "🎭 DEMO MODE" if not health.get('model_loaded', False) else "🚀 PRODUCTION"
-            st.info(mode)
+            mode_label = "Demo Mode" if "DEMO" in mode else "Production Mode"
+            st.info(f"{mode} ({mode_label})")
         else:
-            st.error("⚠️ API Issue")
+            st.error(_accessible_status("⚠️", "API Issue"))
     except Exception as e:
         logger.error(f"Error: {e}")
-        st.error("❌ API Offline")
+        st.error(_accessible_status("❌", "API Offline"))
         st.warning("Start API: `python -m uvicorn src.api.main:app --reload`")
 
 # Page: Dashboard
@@ -415,7 +421,7 @@ elif page == "💳 Transaction Scan":
                     if response.status_code == 200:
                         result = response.json()
                         
-                        st.success("✅ Analysis Complete!")
+                        st.success(_accessible_status("✅", "Analysis Complete"))
                         
                         # Results Display
                         st.markdown("---")
@@ -429,7 +435,7 @@ elif page == "💳 Transaction Scan":
                         with metric_cols[1]:
                             decision = result['decision']
                             emoji = "🟢" if decision == "ALLOW" else "🟡" if decision == "REVIEW" else "🔴"
-                            st.metric("Decision", f"{emoji} {decision}")
+                            st.metric("Decision", f"{emoji} {decision} ({decision.title()} decision)")
                         with metric_cols[2]:
                             st.metric("Confidence", f"{result['confidence']:.1%}")
                         with metric_cols[3]:
@@ -830,7 +836,7 @@ elif page == "📊 Risk Analytics":
             with col2:
                 st.metric("Flagged", flagged)
             with col3:
-                st.metric("Avg Response Time", f"{avg_time:.2f}ms", 
+                st.metric("Avg Response Time", f"{avg_time:.2f}ms",
                          delta="Good" if avg_time < 200 else "Slow")
             with col4:
                 st.metric("Uptime", f"{uptime/3600:.1f}h")
@@ -927,7 +933,7 @@ elif page == "🧪 Innovation Lab":
                     st.metric("Avg Time to Arrest", f"{stats['avg_time_to_arrest_minutes']:.1f} min")
                 with col_c:
                     arrest_rate_colored = "🟢" if stats['arrest_rate'] >= 0.8 else "🟡" if stats['arrest_rate'] >= 0.6 else "🔴"
-                    st.metric("System Status", f"{arrest_rate_colored} Operational")
+                    st.metric("System Status", f"{arrest_rate_colored} Operational (Operational)")
             else:
                 st.warning("⚠️ Honeypot statistics unavailable (innovation module not running)")
         except Exception as e:
@@ -946,7 +952,7 @@ elif page == "🧪 Innovation Lab":
                 active = data['active_honeypots']
                 
                 if len(active) > 0:
-                    st.info(f"🔴 **{len(active)} active honeypot(s)** currently monitoring withdrawal attempts")
+                    st.info(f"🔴 Active honeypots: {len(active)} currently monitoring withdrawal attempts")
                     
                     for hp in active:
                         with st.expander(f"Honeypot {hp['honeypot_id']} - ₹{hp['amount']:,.2f}"):
@@ -955,7 +961,8 @@ elif page == "🧪 Innovation Lab":
                                 st.write(f"**Transaction ID**: {hp['transaction_id']}")
                                 st.write(f"**Target Account**: {hp['target_account']}")
                                 st.write(f"**Amount**: ₹{hp['amount']:,.2f} {hp['currency']}")
-                                st.write(f"**Status**: {'🚨 POLICE ALERTED' if hp['police_alerted'] else '👁️ MONITORING'}")
+                                status_text = "Police alerted" if hp['police_alerted'] else "Monitoring"
+                                st.write(f"**Status**: {'🚨' if hp['police_alerted'] else '👁️'} {status_text} ({status_text})")
                             with col2:
                                 st.write(f"**Activated**: {hp['activated_at']}")
                                 st.write(f"**Time Remaining**: {hp['time_remaining_seconds']//60} min {hp['time_remaining_seconds']%60} sec")
@@ -963,7 +970,7 @@ elif page == "🧪 Innovation Lab":
                                 if hp['last_attempt_location']:
                                     st.write(f"**Last Attempt Location**: {hp['last_attempt_location']}")
                 else:
-                    st.success("✅ No active honeypots (all clear)")
+                    st.success(_accessible_status("✅", "No active honeypots"))
             else:
                 st.warning("⚠️ Active honeypots unavailable")
         except Exception as e:
@@ -1309,9 +1316,9 @@ elif page == "🧪 Innovation Lab":
                             
                             # Verification Status
                             if result['verified']:
-                                st.success("✅ **EVIDENCE VERIFIED** - Blockchain integrity intact")
+                                st.success(_accessible_status("✅", "Evidence Verified") + " - Blockchain integrity intact")
                             else:
-                                st.error("❌ **VERIFICATION FAILED** - Evidence compromised or not found")
+                                st.error(_accessible_status("❌", "Verification Failed") + " - Evidence compromised or not found")
                             
                             col1, col2, col3, col4 = st.columns(4)
                             
@@ -1362,7 +1369,7 @@ elif page == "🧪 Innovation Lab":
             
             if st.button("📜 Export Evidence Package", type="primary", use_container_width=True):
                 if not auth_token:
-                    st.error("❌ Authorization token required")
+                    st.error(_accessible_status("❌", "Authorization token required"))
                 else:
                     with st.spinner("Generating court-admissible evidence package..."):
                         try:
