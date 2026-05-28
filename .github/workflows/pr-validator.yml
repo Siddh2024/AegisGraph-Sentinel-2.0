@@ -16,7 +16,7 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - name: Fetch PR Details for Comment Trigger
+      - name: Fetch PR Details
         id: pr_info
         uses: actions/github-script@v7
         with:
@@ -59,7 +59,7 @@ jobs:
           # Require Screenshot/Visual Evidence
           if not re.search(r'!\[.*?\]\(.*?\)|<img\s+[^>]*src=', body):
               errors.append("- **Missing Screenshot/Visual Proof:** You must attach a UI screenshot or a terminal test log image.")
-              
+          
           if errors:
               with open("errors.txt", "w") as f:
                   f.write("\n".join(errors))
@@ -76,10 +76,8 @@ jobs:
             try { errors = fs.readFileSync('errors.txt', 'utf8'); } catch (err) {}
             
             const prNumber = parseInt(${{ steps.pr_info.outputs.number }}, 10);
-            
             const commentBody = `⚠️ **PULL REQUEST REJECTED & CLOSED** ⚠️\n\n@${context.actor}, your Pull Request has been automatically closed because it is missing core requirements:\n\n${errors}\n\n💡 **How to fix:** Edit your description, add the details and screenshot, and then **re-open** this PR!`;
             
-            // 1. Post rejection message
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -87,7 +85,6 @@ jobs:
               body: commentBody
             });
             
-            // 2. Hard close the PR immediately
             await github.rest.pulls.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -120,15 +117,13 @@ jobs:
                 
               labelsToAdd = labelsToAdd.concat(inheritedLabels);
               
-              if (labelsToAdd.length > 0) {
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  labels: labelsToAdd
-                });
-                console.log(`Successfully synced GSSoC Metrics: ${labelsToAdd}`);
-              }
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: labelsToAdd
+              });
+              console.log(`Successfully synced GSSoC Metrics: ${labelsToAdd}`);
               
             } catch (error) {
               console.log("Could not process GSSoC labels automatically: ", error.message);
