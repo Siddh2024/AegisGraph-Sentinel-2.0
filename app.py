@@ -7,6 +7,7 @@ Real-time Fraud Detection Interface
 import logging
 logger = logging.getLogger(__name__)
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 try:
     from streamlit_autorefresh import st_autorefresh
 except ImportError:
@@ -40,6 +41,18 @@ MAX_BATCH_UPLOAD_BYTES = 5 * 1024 * 1024
 BATCH_PREVIEW_ROWS = 10
 BATCH_CHUNK_SIZE = 50
 BATCH_MAX_ROWS = 500
+COMMAND_CENTER_REFRESH_KEY = "command_center_live_refresh"
+COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+
+def _cache_data(ttl: int):
+    """Return a cache decorator that degrades gracefully on older Streamlit builds."""
+    cache_data = getattr(st, "cache_data", None)
+    if cache_data is None:
+        def passthrough(fn):
+            return fn
+        return passthrough
+    return cache_data(ttl=ttl)
 
 
 def _accessible_status(emoji: str, label: str) -> str:
@@ -75,7 +88,43 @@ def _estimate_csv_rows(uploaded_file) -> int:
 def _schedule_live_refresh(interval_ms: int = 1500) -> None:
     """Request a non-blocking dashboard refresh when the helper is available."""
     if st_autorefresh is not None:
-        st_autorefresh(interval=interval_ms, key="command_center_live_refresh")
+        st_autorefresh(interval=interval_ms, key=COMMAND_CENTER_REFRESH_KEY)
+
+
+@_cache_data(ttl=5)
+def _fetch_health_snapshot(api_url: str) -> dict:
+    response = requests.get(f"{api_url}/health", timeout=2)
+    return response.json() if response.status_code == 200 else {}
+
+
+@_cache_data(ttl=5)
+def _fetch_stats_snapshot(api_url: str) -> dict:
+    response = requests.get(f"{api_url}/stats", timeout=5)
+    return response.json() if response.status_code == 200 else {}
+
+
+def _build_live_event(api_url: str, txn: dict) -> dict | None:
+    """Execute one live fraud check off the UI thread and shape the dashboard payload."""
+    try:
+        start_t = time.time()
+        resp = requests.post(f"{api_url}/api/v1/fraud/check", json=txn, timeout=2)
+        latency = int((time.time() - start_t) * 1000)
+        if resp.status_code != 200:
+            return None
+
+        result = resp.json()
+        return {
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "id": txn["transaction_id"],
+            "amount": txn["amount"],
+            "decision": result.get("decision", "ALLOW"),
+            "risk": result.get("risk_score", 0.0),
+            "latency": latency,
+            "explanation": result.get("explanation", ""),
+            "breakdown": result.get("breakdown", {}),
+        }
+    except Exception:
+        return None
 
 # Custom CSS
 st.markdown("""
@@ -334,49 +383,45 @@ if page == "🧭 Command Center":
     
     if 'live_events' not in st.session_state:
         st.session_state.live_events = []
-        
+    if 'live_event_future' not in st.session_state:
+        st.session_state.live_event_future = None
+    if 'live_event_txn' not in st.session_state:
+        st.session_state.live_event_txn = None
+
     try:
-        response = requests.get(f"{API_URL}/stats", timeout=5)
-        stats = response.json() if response.status_code == 200 else {}
-    except:
+        health = _fetch_health_snapshot(API_URL)
+    except Exception:
+        health = {}
+    try:
+        stats = _fetch_stats_snapshot(API_URL)
+    except Exception:
         stats = {}
         
     # Generate a live event if active
     if live_mode:
         _schedule_live_refresh()
-        # Local imports consolidated globally
-        # Create a mock transaction to send to the backend
-        accounts = ["ACC" + str(random.randint(1000, 9999)), "mule_acc_001", "ACC" + str(random.randint(1000, 9999))]
-        txn = {
-            "transaction_id": f"LIVE_{int(time.time()*1000)}",
-            "source_account": random.choice(accounts),
-            "target_account": random.choice(accounts),
-            "amount": float(random.choice([500, 2500, 50000, 150000, 300000])),
-            "currency": "INR",
-            "mode": random.choice(["UPI", "IMPS"]),
-            "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
-        }
-        try:
-            start_t = time.time()
-            resp = requests.post(f"{API_URL}/api/v1/fraud/check", json=txn, timeout=2)
-            latency = int((time.time() - start_t) * 1000)
-            if resp.status_code == 200:
-                result = resp.json()
-                event = {
-                    "time": datetime.now().strftime("%H:%M:%S"),
-                    "id": txn["transaction_id"],
-                    "amount": txn["amount"],
-                    "decision": result.get("decision", "ALLOW"),
-                    "risk": result.get("risk_score", 0.0),
-                    "latency": latency,
-                    "explanation": result.get("explanation", ""),
-                    "breakdown": result.get("breakdown", {})
-                }
+        live_event_future = st.session_state.live_event_future
+        if live_event_future is not None and live_event_future.done():
+            event = live_event_future.result()
+            if event is not None:
                 st.session_state.live_events.insert(0, event)
-                # Keep last 15
                 st.session_state.live_events = st.session_state.live_events[:15]
-        except Exception as e:
-            pass
+            st.session_state.live_event_future = None
+            st.session_state.live_event_txn = None
+
+        if st.session_state.live_event_future is None:
+            accounts = ["ACC" + str(random.randint(1000, 9999)), "mule_acc_001", "ACC" + str(random.randint(1000, 9999))]
+            txn = {
+                "transaction_id": f"LIVE_{int(time.time()*1000)}",
+                "source_account": random.choice(accounts),
+                "target_account": random.choice(accounts),
+                "amount": float(random.choice([500, 2500, 50000, 150000, 300000])),
+                "currency": "INR",
+                "mode": random.choice(["UPI", "IMPS"]),
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
+            }
+            st.session_state.live_event_txn = txn
+            st.session_state.live_event_future = COMMAND_CENTER_IO_EXECUTOR.submit(_build_live_event, API_URL, txn)
 
     # Metrics
     m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -1489,8 +1534,7 @@ elif page == "📊 Risk Analytics":
         st.markdown('</div>', unsafe_allow_html=True)
 
     if is_live:
-        time.sleep(2)
-        st.rerun()
+        _schedule_live_refresh(2000)
 
 # Page: Innovations
 elif page == "🧪 Innovation Lab":
