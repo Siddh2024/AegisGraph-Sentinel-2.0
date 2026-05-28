@@ -1,89 +1,129 @@
-name: "Issue AI-less Classifier"
+name: "PR Hard Gatekeeper & GSSoC Labeler"
 
 on:
-  issues:
-    types: [opened, edited]
-  workflow_dispatch: # Allows you to manually trigger a sweep of all existing open issues
+  pull_request:
+    types: [opened, edited, synchronize]
+  issue_comment:
+    types: [created]
 
 jobs:
-  label-issue:
+  gatekeeper:
+    if: github.event_name == 'pull_request' || github.event.issue.pull_request != null
     runs-on: ubuntu-latest
     permissions:
+      pull-requests: write
       issues: write
     steps:
-      - name: Analyze Content and Apply Labels
+      - name: Fetch PR Details for Comment Trigger
+        id: pr_info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let body = "";
+            let prNumber = context.issue.number;
+            
+            if (context.eventName === 'pull_request') {
+              body = context.payload.pull_request.body || "";
+            } else {
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              body = pr.data.body || "";
+            }
+            core.setOutput('body', body);
+            core.setOutput('number', prNumber);
+
+      - name: Validate PR Content
+        id: checker
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          SINGLE_ISSUE_NUM: ${{ github.event.issue.number }}
-          SINGLE_TITLE: ${{ github.event.issue.title }}
-          SINGLE_BODY: ${{ github.event.issue.body }}
+          PR_BODY: ${{ steps.pr_info.outputs.body }}
         run: |
-          import os, sys, re, json, urllib.request
-
-          token = os.getenv('GITHUB_TOKEN')
-          repo = os.getenv('REPO')
-          event_name = os.getenv('EVENT_NAME')
-
-          # Keyword rules matching your exact GSSoC labels
-          rules = {
-              "type:bug": [r"bug", r"crash", r"error", r"fail", r"broken", r"except", r"issue", r"not working", r"wrong"],
-              "type:performance": [r"slow", r"performance", r"latency", r"optimize", r"speed", r"memory leak", r"fast", r"timeout"],
-              "type:refactor": [r"refactor", r"clean code", r"structure", r"rewrite", r"simplify", r"cleanup"],
-              "type:accessibility": [r"accessibility", r"a11y", r"contrast", r"screen reader", r"aria", r"alt text", r"font size", r"keyboard nav"],
-              "type:docs": [r"doc", r"readme", r"comment", r"typo", r"guide", r"contributing", r"wiki"],
-              "type:testing": [r"test", r"pytest", r"unittest", r"coverage", r"mock", r"assert"],
-              "type:devops": [r"ci/cd", r"workflow", r"docker", r"yaml", r"action", r"pipeline", r"setup", r"deploy"],
-              "type:feature": [r"feature", r"add", r"request", r"create", r"implement", r"new idea", r"enhance"]
-          }
-
-          def get_labels_for_text(title, body):
-              full_text = f"{title or ''} {body or ''}".lower()
-              matched_labels = []
-              for label, patterns in rules.items():
-                  for pattern in patterns:
-                      if re.search(pattern, full_text):
-                          matched_labels.append(label)
-                          break
-              return matched_labels if matched_labels else ["triage"]
-
-          def apply_labels_to_github(issue_num, labels):
-              url = f"https://api.github.com/repos/{repo}/issues/{issue_num}/labels"
-              req = urllib.request.Request(
-                  url, 
-                  data=json.dumps({"labels": labels}).encode(),
-                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-              )
-              try:
-                  urllib.request.urlopen(req)
-                  print(f"Successfully applied tags {labels} to Issue #{issue_num}")
-              except Exception as e:
-                  print(f"Error applying labels to Issue #{issue_num}: {e}")
-
-          # ---- EXECUTION ROUTINE ----
-          if event_name == "workflow_dispatch":
-              print("🔄 Manual Sweep Triggered: Fetching all existing open issues...")
-              list_url = f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100"
-              req = urllib.request.Request(list_url, headers={"Authorization": f"Bearer {token}"})
-              try:
-                  with urllib.request.urlopen(req) as response:
-                      issues = json.loads(response.read().decode())
-                      for issue in issues:
-                          # Skip Pull Requests (GitHub API listings mix them with issues)
-                          if "pull_request" in issue:
-                              continue
-                          
-                          issue_num = issue["number"]
-                          labels = get_labels_for_text(issue["title"], issue["body"])
-                          apply_labels_to_github(issue_num, labels)
-              except Exception as e:
-                  print(f"Failed to fetch backlog: {e}")
-                  sys.exit(1)
+          import os, sys, re
+          
+          body = os.getenv('PR_BODY', '')
+          errors = []
+          
+          # Require Issue Number Link
+          match = re.search(r'Fixes\s*#\s*(\d+)', body, re.IGNORECASE)
+          if not match:
+              errors.append("- **Missing Linked Issue:** You must include a valid issue number link (e.g., `Fixes #123`).")
           else:
-              issue_num = os.getenv('SINGLE_ISSUE_NUM')
-              title = os.getenv('SINGLE_TITLE')
-              body = os.getenv('SINGLE_BODY')
-              labels = get_labels_for_text(title, body)
-              apply_labels_to_github(issue_num, labels)
+              with open("issue_num.txt", "w") as f:
+                  f.write(match.group(1))
+              
+          # Require Screenshot/Visual Evidence
+          if not re.search(r'!\[.*?\]\(.*?\)|<img\s+[^>]*src=', body):
+              errors.append("- **Missing Screenshot/Visual Proof:** You must attach a UI screenshot or a terminal test log image.")
+              
+          if errors:
+              with open("errors.txt", "w") as f:
+                  f.write("\n".join(errors))
+              sys.exit(1)
         shell: python
+
+      - name: Reject and Auto-Close PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let errors = "Unknown validation error.";
+            try { errors = fs.readFileSync('errors.txt', 'utf8'); } catch (err) {}
+            
+            const commentBody = `⚠️ **PULL REQUEST REJECTED & CLOSED** ⚠️\n\n@${context.actor}, your Pull Request has been automatically closed because it is missing core requirements:\n\n${errors}\n\n💡 **How to fix:** Edit your description, add the details and screenshot, and then **re-open** this PR!`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt('${{ steps.pr_info.outputs.number }}'),
+              body: commentBody
+            });
+            
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ steps.pr_info.outputs.number }}'),
+              state: 'closed'
+            });
+
+      - name: Process GSSoC Rewards and Approval
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('issue_num.txt')) return;
+            const issueNumber = fs.readFileSync('issue_num.txt', 'utf8').trim();
+            const prNumber = parseInt('${{ steps.pr_info.outputs.number }}');
+            
+            let labelsToAdd = ['gssoc:approved'];
+            
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt(issueNumber)
+              });
+              
+              // Clean mapping extracts level:, type:, and quality: tags
+              const inheritedLabels = issue.data.labels
+                .map(l => l.name)
+                .filter(name => name.indexOf('type:') === 0 || name.indexOf('level:') === 0 || name.indexOf('quality:') === 0);
+                
+              labelsToAdd = labelsToAdd.concat(inheritedLabels);
+              
+              if (labelsToAdd.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: labelsToAdd
+                });
+                console.log(`Successfully synced GSSoC Metrics: ${labelsToAdd}`);
+              }
+              
+            } catch (error) {
+              console.log("Could not process GSSoC labels automatically: ", error.message);
+            }
