@@ -960,7 +960,7 @@ class AppState:
         self.decisions = {decision.value: 0 for decision in FraudDecision}
         self.total_risk_score = 0.0
         self.total_processing_time = 0.0
-        self.metrics_lock = asyncio.Lock()
+        self.metrics_lock = None
         self.model_loaded = False
         self.config = {}
         # Graph-based fraud detection
@@ -1029,6 +1029,14 @@ class AppState:
         self.services.register("lateral_movement_detector", value, replace=True)
         
 state = AppState()
+
+
+def _get_metrics_lock() -> asyncio.Lock:
+    metrics_lock = getattr(state, "metrics_lock", None)
+    if metrics_lock is None:
+        metrics_lock = asyncio.Lock()
+        state.metrics_lock = metrics_lock
+    return metrics_lock
 
 
 async def _honeypot_auto_release_loop(interval_seconds: int = 60):
@@ -1875,7 +1883,7 @@ async def check_transaction(request: TransactionCheckRequest):
         processing_time_ms = (time.time() - start_time) * 1000
         
         internal_decision = _normalize_decision(risk_result['decision'])
-        async with state.metrics_lock:
+        async with _get_metrics_lock():
             # Update statistics atomically to avoid interleaving concurrent request mutations.
             state.requests_processed += 1
             state.decisions[internal_decision] += 1
