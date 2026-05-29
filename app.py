@@ -92,7 +92,7 @@ def _schedule_live_refresh(interval_ms: int = 1500) -> None:
         st_autorefresh(interval=interval_ms, key=COMMAND_CENTER_REFRESH_KEY)
 
 
-@_cache_data(ttl=5)
+@_cache_data(ttl=20)
 def _fetch_health_snapshot(api_url: str) -> dict:
     response = requests.get(f"{api_url}/health", timeout=2)
     return response.json() if response.status_code == 200 else {}
@@ -394,9 +394,8 @@ with st.sidebar:
     
     # API Status Check
     try:
-        response = requests.get(f"{API_URL}/health", timeout=2)
-        if response.status_code == 200:
-            health = response.json()
+        health = _fetch_health_snapshot(API_URL)
+        if health:
             st.success(_accessible_status("✅", "API Online"))
             st.metric("Uptime", f"{int(health.get('uptime_seconds', 0))}s")
             mode = "🎭 DEMO MODE" if not health.get('model_loaded', False) else "🚀 PRODUCTION"
