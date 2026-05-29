@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import logging
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -1102,6 +1103,298 @@ class BlockchainEvidenceManager:
             'export_timestamp': export_timestamp,
             'authorized_by': requesting_authority or 'UNKNOWN',
         }
+    
+    def store_evidence(
+        self,
+        transaction_id: str,
+        data: Dict,
+    ) -> Dict:
+        """
+        Store evidence data for a transaction
+        
+        Args:
+            transaction_id: Transaction ID (must be non-empty string)
+            data: Evidence data dict (must be non-empty dict)
+        
+        Returns:
+            Dictionary with storage status and evidence ID
+            
+        Raises:
+            ValueError: If inputs are invalid
+        """
+        try:
+            # Phase 1: Input Validation
+            if not transaction_id or not isinstance(transaction_id, str):
+                raise ValueError("transaction_id must be non-empty string")
+            
+            if not data or not isinstance(data, dict):
+                raise ValueError("data must be non-empty dict")
+            
+            # Validate required fields in data
+            required_fields = ['risk_score', 'decision', 'amount']
+            missing_fields = [f for f in required_fields if f not in data]
+            if missing_fields:
+                raise ValueError(
+                    f"data missing required fields: {', '.join(missing_fields)}"
+                )
+            
+            # Phase 2: Store in journal
+            try:
+                evidence_record = {
+                    'transaction_id': transaction_id,
+                    'evidence_data': data,
+                    'stored_at': datetime.now(timezone.utc).isoformat(),
+                    'evidence_id': f"EV_{secrets.token_hex(6).upper()}",
+                }
+                
+                # Try to store in Redis first
+                try:
+                    self._redis.save_evidence(BlockchainEvidence(
+                        evidence_id=evidence_record['evidence_id'],
+                        transaction_hash=hashlib.sha256(transaction_id.encode()).hexdigest(),
+                        detection_timestamp=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        risk_score=float(data.get('risk_score', 0.0)),
+                        decision=str(data.get('decision', 'REVIEW')),
+                        confidence=float(data.get('confidence', 0.0)),
+                        graph_risk=float(data.get('graph_risk', 0.0)),
+                        velocity_risk=float(data.get('velocity_risk', 0.0)),
+                        behavior_risk=float(data.get('behavior_risk', 0.0)),
+                        entropy_risk=float(data.get('entropy_risk', 0.0)),
+                        explanation_hash=hashlib.sha256(
+                            str(data.get('explanation', '')).encode()
+                        ).hexdigest(),
+                        fraud_patterns=data.get('fraud_patterns', []),
+                        model_version=self.model_version,
+                        model_hash=self.model_hash,
+                        block_number=0,
+                        block_hash="",
+                        previous_block_hash="",
+                        validator_signatures=[],
+                        consensus_timestamp=datetime.now(timezone.utc).isoformat(),
+                        finality_time_ms=0.0,
+                    ))
+                except Exception:
+                    pass  # Fall back to journal
+                
+                # Always store in journal as fallback
+                self._journal.append(BlockchainEvidence(
+                    evidence_id=evidence_record['evidence_id'],
+                    transaction_hash=hashlib.sha256(transaction_id.encode()).hexdigest(),
+                    detection_timestamp=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    risk_score=float(data.get('risk_score', 0.0)),
+                    decision=str(data.get('decision', 'REVIEW')),
+                    confidence=float(data.get('confidence', 0.0)),
+                    graph_risk=float(data.get('graph_risk', 0.0)),
+                    velocity_risk=float(data.get('velocity_risk', 0.0)),
+                    behavior_risk=float(data.get('behavior_risk', 0.0)),
+                    entropy_risk=float(data.get('entropy_risk', 0.0)),
+                    explanation_hash=hashlib.sha256(
+                        str(data.get('explanation', '')).encode()
+                    ).hexdigest(),
+                    fraud_patterns=data.get('fraud_patterns', []),
+                    model_version=self.model_version,
+                    model_hash=self.model_hash,
+                    block_number=0,
+                    block_hash="",
+                    previous_block_hash="",
+                    validator_signatures=[],
+                    consensus_timestamp=datetime.now(timezone.utc).isoformat(),
+                    finality_time_ms=0.0,
+                ))
+                
+                return {
+                    'status': 'success',
+                    'evidence_id': evidence_record['evidence_id'],
+                    'transaction_id': transaction_id,
+                    'stored_at': evidence_record['stored_at'],
+                }
+                
+            except json.JSONDecodeError as json_err:
+                raise ValueError(f"Invalid JSON in evidence data: {str(json_err)}")
+                
+        except ValueError:
+            raise
+        except Exception as unexpected_err:
+            raise
+    
+    def get_chain(self, transaction_id: str) -> Dict:
+        """
+        Get blockchain chain for a transaction
+        
+        Args:
+            transaction_id: Transaction ID to look up
+        
+        Returns:
+            Dictionary with chain data and verification
+            
+        Raises:
+            ValueError: If transaction_id is invalid
+        """
+        try:
+            # Phase 1: Input Validation
+            if not transaction_id or not isinstance(transaction_id, str):
+                raise ValueError("transaction_id must be non-empty string")
+            
+            # Phase 2: Retrieve chain data
+            try:
+                transaction_hash = hashlib.sha256(transaction_id.encode()).hexdigest()
+                chain_data = {
+                    'transaction_id': transaction_id,
+                    'transaction_hash': transaction_hash,
+                    'chain': [],
+                    'verified': False,
+                }
+                
+                # Search in all nodes
+                for node in self.nodes:
+                    for block in node.chain:
+                        for tx in block.get('transactions', []):
+                            if tx.get('transaction_id') == transaction_id or \
+                               hashlib.sha256(transaction_id.encode()).hexdigest() == tx.get('transaction_hash'):
+                                chain_data['chain'].append({
+                                    'block_number': block['block_number'],
+                                    'block_hash': block['hash'],
+                                    'block_timestamp': block['timestamp'],
+                                    'transaction_data': {
+                                        k: v for k, v in tx.items() 
+                                        if k not in ['_source', '_target']
+                                    },
+                                    'validator': block['validator'],
+                                })
+                
+                # Verify chain integrity
+                chain_data['verified'] = self.verify_chain_integrity_for_transaction(transaction_id)
+                
+                if not chain_data['chain']:
+                    chain_data['status'] = 'not_found'
+                    chain_data['message'] = 'No blockchain records found for this transaction'
+                    return chain_data
+                
+                chain_data['status'] = 'success'
+                chain_data['block_count'] = len(chain_data['chain'])
+                
+                return chain_data
+                
+            except json.JSONDecodeError as json_err:
+                raise ValueError(f"Invalid blockchain data format: {str(json_err)}")
+                
+        except ValueError:
+            raise
+        except Exception:
+            raise
+    
+    def verify_integrity(self) -> Dict:
+        """
+        Verify integrity of entire blockchain
+        
+        Returns:
+            Dictionary with verification results
+        """
+        try:
+            verification_result = {
+                'verified': True,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'node_status': {},
+                'errors': [],
+                'warnings': [],
+            }
+            
+            # Phase 1: Verify each node's chain
+            for node in self.nodes:
+                try:
+                    is_valid = node.verify_chain_integrity()
+                    verification_result['node_status'][node.node_id] = {
+                        'verified': is_valid,
+                        'chain_length': len(node.chain),
+                        'last_block_hash': node.chain[-1]['hash'] if node.chain else None,
+                    }
+                    
+                    if not is_valid:
+                        verification_result['verified'] = False
+                        verification_result['errors'].append(
+                            f"Chain integrity failed for node {node.node_id}"
+                        )
+                        
+                except Exception as node_err:
+                    verification_result['verified'] = False
+                    verification_result['errors'].append(
+                        f"Error verifying node {node.node_id}: {str(node_err)}"
+                    )
+            
+            # Phase 2: Verify consensus across nodes
+            try:
+                node_hashes = {}
+                for node in self.nodes:
+                    if node.chain:
+                        last_hash = node.chain[-1]['hash']
+                        if last_hash not in node_hashes:
+                            node_hashes[last_hash] = []
+                        node_hashes[last_hash].append(node.node_id)
+                
+                if len(node_hashes) > 1:
+                    verification_result['warnings'].append(
+                        f"Consensus divergence: {len(node_hashes)} different chain heads detected"
+                    )
+                    
+            except Exception as consensus_err:
+                verification_result['warnings'].append(f"Consensus check failed: {str(consensus_err)}")
+            
+            # Phase 3: Verify evidence storage
+            try:
+                evidence_count = self._journal.count()
+                verification_result['evidence_records'] = evidence_count
+                verification_result['redis_available'] = self._redis.available
+                
+            except Exception as storage_err:
+                verification_result['warnings'].append(f"Storage verification failed: {str(storage_err)}")
+            
+            return verification_result
+            
+        except Exception:
+            raise
+    
+    def verify_chain_integrity_for_transaction(self, transaction_id: str) -> bool:
+        """
+        Helper method to verify chain integrity for a specific transaction
+        
+        Args:
+            transaction_id: Transaction ID to verify
+            
+        Returns:
+            True if chain is valid, False otherwise
+        """
+        try:
+            if not transaction_id:
+                return False
+            
+            transaction_hash = hashlib.sha256(transaction_id.encode()).hexdigest()
+            
+            # Find blocks containing this transaction
+            for node in self.nodes:
+                for i, block in enumerate(node.chain):
+                    for tx in block.get('transactions', []):
+                        if tx.get('transaction_id') == transaction_id or \
+                           tx.get('transaction_hash') == transaction_hash:
+                            # Verify block chain
+                            if i > 0:
+                                prev_block = node.chain[i-1]
+                                if block['previous_hash'] != prev_block['hash']:
+                                    return False
+                            
+                            # Verify block hash
+                            expected_hash = node._compute_hash(
+                                f"block_{block['block_number']}",
+                                block['previous_hash'],
+                                block.get('transactions', []),
+                                block['timestamp'],
+                            )
+                            if block['hash'] != expected_hash:
+                                return False
+            
+            return True
+            
+        except Exception:
+            return False
     
     def get_statistics(self) -> Dict:
         """Get blockchain statistics"""
