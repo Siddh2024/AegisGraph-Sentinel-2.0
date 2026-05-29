@@ -2,6 +2,7 @@
 
 import networkx as nx
 import pytest
+from unittest.mock import patch
 
 from src.utils.cache import (
     GraphCache,
@@ -68,6 +69,13 @@ class TestInMemoryGraphCache:
             cache.set(f"key{i}", f"value{i}")
         
         assert len(cache.cache) == 10  # Should evict oldest
+
+    def test_cache_ttl_is_enforced_on_read(self, cache):
+        """Test that expired entries are removed and missed on access."""
+        with patch("src.utils.cache.time.time", side_effect=[100.0, 103.0]):
+            cache.set("key1", "value1", ttl=2)
+            assert cache.get("key1") is None
+            assert "key1" not in cache.cache
 
 
 class TestGraphOperationCache:
