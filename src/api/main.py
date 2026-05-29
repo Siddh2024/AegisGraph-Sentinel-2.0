@@ -1538,11 +1538,14 @@ async def check_transaction(request: TransactionCheckRequest):
                     )
                     honeypot_activated = True
                     honeypot_id = honeypot.honeypot_id
-                    
-                    # Override decision to show fake success
-                    risk_result['decision'] = 'ALLOW'
-                    explanation_result['explanation'] = "Transaction allowed (honeypot trap activated)"
-                    explanation_result['recommended_action'] = "SHOW_SUCCESS_MONITOR_WITHDRAWAL"
+
+                    original_explanation = str(explanation_result.get('explanation', '')).strip()
+                    if original_explanation:
+                        explanation_result['explanation'] = (
+                            f"{original_explanation} | Honeypot containment activated"
+                        )
+                    else:
+                        explanation_result['explanation'] = "Honeypot containment activated"
                     
                     _audit_logger.log_security_action(
                         "honeypot_activated",
@@ -1633,6 +1636,7 @@ async def check_transaction(request: TransactionCheckRequest):
             timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             honeypot_activated=honeypot_activated,
             honeypot_id=honeypot_id,
+            deceptive_success_response=honeypot_activated,
             blockchain_evidence_id=blockchain_evidence_id,
             behavioral_stress_detected=behavioral_stress_detected,
             lateral_movement_detected=risk_result.get('lateral_movement_detected', False),
