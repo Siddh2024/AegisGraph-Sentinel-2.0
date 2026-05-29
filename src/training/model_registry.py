@@ -35,10 +35,13 @@ class ModelRegistry:
         self._manifest = self._load_manifest()
 
     def save_version(self, epoch: int, checkpoint: dict, metrics: dict) -> str:
-        """Save a checkpoint as a versioned artifact and record it in the manifest."""
+        """Save a checkpoint as a versioned artifact and record it in the manifest, ensuring the artifact stays within the registry directory."""
         version_id = f"v_epoch_{epoch}"
         artifact_name = f"htgnn_{version_id}.pt"
-        artifact_path = self.registry_dir / artifact_name
+        # Resolve the full artifact path and verify containment within the registry directory
+        artifact_path = (self.registry_dir / artifact_name).resolve()
+        if not artifact_path.is_relative_to(self.registry_dir.resolve()):
+            raise ValueError(f"Invalid artifact_path {artifact_path} outside of registry_dir {self.registry_dir}")
         torch.save(checkpoint, artifact_path)
         self.backend.save(artifact_path, artifact_name)
 
