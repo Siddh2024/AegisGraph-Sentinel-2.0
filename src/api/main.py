@@ -664,17 +664,10 @@ INNOVATIONS_AVAILABLE = all(
     )
 )
 
-LATERAL_MOVEMENT_AVAILABLE = False
-try:
-    from ..features.lateral_movement import LateralMovementDetector
-    LATERAL_MOVEMENT_AVAILABLE = True
-except (ImportError, SyntaxError) as e:
-    _api_logger.warning(
-        f"Lateral movement module unavailable ({e})",
-        event_type="innovation_import_fallback",
-    )
-    LATERAL_MOVEMENT_AVAILABLE = False
-
+LATERAL_MOVEMENT_AVAILABLE = (
+    importlib_util.find_spec("src.features.lateral_movement")
+    is not None
+)
 BLAST_RADIUS_AVAILABLE = False
 try:
     from ..features.blast_radius import BlastRadiusAnalyzer
@@ -1009,18 +1002,6 @@ except (ImportError, SyntaxError) as e:
         _compute_risk_score_fallback,
         _generate_explanation_fallback,
     )
-
-
-try:
-    from ..features.lateral_movement import LateralMovementDetector
-    LATERAL_MOVEMENT_AVAILABLE = True
-except (ImportError, SyntaxError) as e:
-    _api_logger.warning(
-        f"Lateral movement module not available ({e})",
-        event_type="lateral_movement_import_fallback",
-    )
-    LATERAL_MOVEMENT_AVAILABLE = False
-    LateralMovementDetector = None
 
 
 # Global state
@@ -1365,6 +1346,7 @@ def _initialize_innovation_runtime(startup_logger):
 
     if LATERAL_MOVEMENT_AVAILABLE:
         try:
+            from src.features.lateral_movement import LateralMovementDetector
             _lmd = LateralMovementDetector()
             state.services.register_service("lateral_movement_detector", _lmd, replace=True)
             lateral_movement_detector = _lmd
