@@ -2598,13 +2598,12 @@ elif page == "🕸️ Network Graph Explorer":
     current_phase_desc = phase_descriptions[st.session_state.prop_step]
     
     # Display the current simulation step details
-    st.markdown(f"""
-    <div class="fallback-container" style="margin-bottom: 15px;">
-        <strong style="color: #2dd4bf; font-size: 1.1rem;">Active Simulation Step: {selected_step_name}</strong><br/>
-        <p style="margin-top: 8px; margin-bottom: 0; color: #cbd5e1;">{current_phase_desc}</p>
-        {"<p style='margin-top: 8px; margin-bottom: 0; color: #38bdf8;'>🔄 <em>Autoplay is active, cycling steps every 2 seconds.</em></p>" if animate_propagation else ""}
-    </div>
-    """, unsafe_allow_html=True)
+    current_phase_html = f"""<div class="fallback-container" style="margin-bottom: 15px;">
+<strong style="color: #2dd4bf; font-size: 1.1rem;">Active Simulation Step: {selected_step_name}</strong><br/>
+<p style="margin-top: 8px; margin-bottom: 0; color: #cbd5e1;">{current_phase_desc}</p>
+{"<p style='margin-top: 8px; margin-bottom: 0; color: #38bdf8;'>🔄 <em>Autoplay is active, cycling steps every 2 seconds.</em></p>" if animate_propagation else ""}
+</div>"""
+    st.markdown(current_phase_html, unsafe_allow_html=True)
     
     # Extract and Filter Nodes
     fallback_nodes = []
@@ -2686,38 +2685,27 @@ elif page == "🕸️ Network Graph Explorer":
         # Screen reader helper text in an invisible span
         sr_only = f"<span style='position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0;'>Account {fn['node_id']}, Role {fn['role']}, Risk {fn['risk_text']}, {fn['connections']}, Status {active_label}, Visibility {vis_label}</span>"
         
-        row_html = f"""
-        <tr class="{row_class}">
-            <td><strong>{fn['node_id']}</strong>{match_label}{sr_only}</td>
-            <td>{fn['role']}</td>
-            <td>{fn['risk_badge']}</td>
-            <td>{fn['connections']}</td>
-            <td style="color: {'#ef4444' if fn['is_active'] else '#94a3b8'}">{active_label}</td>
-            <td>{vis_label}</td>
-        </tr>
-        """
+        row_html = f'<tr class="{row_class}"><td><strong>{fn["node_id"]}</strong>{match_label}{sr_only}</td><td>{fn["role"]}</td><td>{fn["risk_badge"]}</td><td>{fn["connections"]}</td><td style="color: {"#ef4444" if fn["is_active"] else "#94a3b8"}">{active_label}</td><td>{vis_label}</td></tr>'
         table_rows.append(row_html)
         
-    nodes_table_html = f"""
-    <div class="fallback-container">
-        <h4 style="color: #f1f5f9; margin-top: 0; margin-bottom: 10px;">📋 Network Nodes Directory ({len(fallback_nodes)} accounts)</h4>
-        <table class="fallback-table">
-            <thead>
-                <tr>
-                    <th>Account ID</th>
-                    <th>Network Role</th>
-                    <th>Risk Category</th>
-                    <th>Direct Connections</th>
-                    <th>Propagation State</th>
-                    <th>Canvas Visibility</th>
-                </tr>
-            </thead>
-            <tbody>
-                {"".join(table_rows)}
-            </tbody>
-        </table>
-    </div>
-    """
+    nodes_table_html = f"""<div class="fallback-container">
+<h4 style="color: #f1f5f9; margin-top: 0; margin-bottom: 10px;">📋 Network Nodes Directory ({len(fallback_nodes)} accounts)</h4>
+<table class="fallback-table">
+<thead>
+<tr>
+<th>Account ID</th>
+<th>Network Role</th>
+<th>Risk Category</th>
+<th>Direct Connections</th>
+<th>Propagation State</th>
+<th>Canvas Visibility</th>
+</tr>
+</thead>
+<tbody>
+{"".join(table_rows)}
+</tbody>
+</table>
+</div>"""
     st.markdown(nodes_table_html, unsafe_allow_html=True)
     
     # Active Connections Table HTML
@@ -2759,34 +2747,25 @@ elif page == "🕸️ Network Graph Explorer":
         match_label = " <strong style='color: #2dd4bf;'>[MATCH]</strong>" if fe["is_match"] else ""
         active_label = "⚡ Active Flow" if fe["is_active"] else "Inactive"
         
-        row_html = f"""
-        <tr class="{row_class}">
-            <td><strong>{fe['source']}</strong>{match_label}</td>
-            <td><strong>{fe['target']}</strong></td>
-            <td>₹{fe['amount']:,.2f}</td>
-            <td style="color: {'#ef4444' if fe['is_active'] else '#94a3b8'}">{active_label}</td>
-        </tr>
-        """
+        row_html = f'<tr class="{row_class}"><td><strong>{fe["source"]}</strong>{match_label}</td><td><strong>{fe["target"]}</strong></td><td>₹{fe["amount"]:,.2f}</td><td style="color: {"#ef4444" if fe["is_active"] else "#94a3b8"}">{active_label}</td></tr>'
         edge_rows.append(row_html)
         
-    edges_table_html = f"""
-    <div class="fallback-container">
-        <h4 style="color: #f1f5f9; margin-top: 0; margin-bottom: 10px;">💸 Money Routing Flows ({len(fallback_edges)} paths)</h4>
-        <table class="fallback-table">
-            <thead>
-                <tr>
-                    <th>Source Account</th>
-                    <th>Destination Account</th>
-                    <th>Transfer Amount</th>
-                    <th>Flow Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {"".join(edge_rows)}
-            </tbody>
-        </table>
-    </div>
-    """
+    edges_table_html = f"""<div class="fallback-container">
+<h4 style="color: #f1f5f9; margin-top: 0; margin-bottom: 10px;">💸 Money Routing Flows ({len(fallback_edges)} paths)</h4>
+<table class="fallback-table">
+<thead>
+<tr>
+<th>Source Account</th>
+<th>Destination Account</th>
+<th>Transfer Amount</th>
+<th>Flow Status</th>
+</tr>
+</thead>
+<tbody>
+{"".join(edge_rows)}
+</tbody>
+</table>
+</div>"""
     st.markdown(edges_table_html, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     
