@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
 from datetime import datetime
+import functools
 
 
 def load_config(config_path: str = "config/config.yaml") -> dict:
@@ -289,6 +290,7 @@ def validate_thresholds(thresholds: dict) -> list:
     return errors
 
 
+@functools.lru_cache(maxsize=1)
 def load_thresholds(config_path: str = "config/thresholds.yaml", 
                     validate: bool = True) -> dict:
     """

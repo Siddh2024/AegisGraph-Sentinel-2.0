@@ -1,0 +1,181 @@
+"""Centralized asyncio task tracking and cancellation."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import time
+import traceback
+from dataclasses import dataclass
+from typing import Any, Awaitable, Dict, Iterable, List, Optional, Union
+
+from ..observability import get_logger
+
+_logger = get_logger("runtime.task_registry")
+
+
+@dataclass(frozen=True)
+class TaskInfo:
+    """Metadata for a managed background task."""
+
+    name: str
+    owner: str
+    created_at: float
+    done: bool
+    cancelled: bool
+
+
+class TaskRegistry:
+    """Track background tasks so shutdown can cancel them deterministically."""
+
+    def __init__(self, logger: Any = None) -> None:
+        self._tasks: Dict[asyncio.Task, TaskInfo] = {}
+        self._logger = logger or _logger
+
+    def register_task(
+        self,
+        task_or_coro: Union[asyncio.Task, Awaitable[Any]],
+        *,
+        name: str,
+        owner: str = "runtime",
+    ) -> asyncio.Task:
+        """Register a task or coroutine and attach failure cleanup callbacks."""
+        if isinstance(task_or_coro, asyncio.Task):
+            task = task_or_coro
+        elif inspect.isawaitable(task_or_coro):
+            task = asyncio.create_task(task_or_coro, name=name)
+        else:
+            raise TypeError("register_task expects an asyncio.Task or awaitable")
+
+        info = TaskInfo(
+            name=name,
+            owner=owner,
+            created_at=time.time(),
+            done=task.done(),
+            cancelled=task.cancelled(),
+        )
+        self._tasks[task] = info
+        task.add_done_callback(self._on_task_done)
+        self._logger.info(
+            "Background task registered",
+            event_type="runtime_task_registered",
+            metadata={"task": name, "owner": owner, "active_tasks": len(self._tasks)},
+        )
+        return task
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        info = self._tasks.pop(task, None)
+        if info is None:
+            return
+
+        metadata = {"task": info.name, "owner": info.owner, "active_tasks": len(self._tasks)}
+        if task.cancelled():
+            self._logger.info(
+                "Background task cancelled",
+                event_type="runtime_task_cancelled",
+                metadata=metadata,
+            )
+            return
+
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            self._logger.info(
+                "Background task cancelled",
+                event_type="runtime_task_cancelled",
+                metadata=metadata,
+            )
+            return
+
+        if exc is not None:
+            metadata["exception"] = repr(exc)
+            metadata["traceback"] = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+            self._logger.error(
+                "Background task failed",
+                event_type="runtime_task_failed",
+                metadata=metadata,
+            )
+        else:
+            self._logger.info(
+                "Background task completed",
+                event_type="runtime_task_completed",
+                metadata=metadata,
+            )
+
+    def unregister_task(self, task: asyncio.Task) -> None:
+        """Remove a task from tracking without cancelling it."""
+        self._tasks.pop(task, None)
+
+    def get_active_tasks(self) -> List[TaskInfo]:
+        """Return active task metadata for inspection and metrics."""
+        active: List[TaskInfo] = []
+        for task, info in self._tasks.items():
+            if not task.done():
+                active.append(
+                    TaskInfo(
+                        name=info.name,
+                        owner=info.owner,
+                        created_at=info.created_at,
+                        done=task.done(),
+                        cancelled=task.cancelled(),
+                    )
+                )
+        return active
+
+    @property
+    def active_count(self) -> int:
+        return len(self.get_active_tasks())
+
+    async def cancel_all_tasks(
+        self,
+        *,
+        timeout_seconds: float = 10.0,
+        owners: Optional[Iterable[str]] = None,
+    ) -> List[Any]:
+        """Cancel managed tasks and wait for completion up to a timeout."""
+        owner_filter = set(owners) if owners is not None else None
+        tasks = [
+            task
+            for task, info in list(self._tasks.items())
+            if not task.done() and (owner_filter is None or info.owner in owner_filter)
+        ]
+        if not tasks:
+            self._logger.info(
+                "No background tasks to cancel",
+                event_type="runtime_task_cancel_all_empty",
+            )
+            return []
+
+        self._logger.info(
+            "Cancelling background tasks",
+            event_type="runtime_task_cancel_all_started",
+            metadata={"count": len(tasks), "timeout_seconds": timeout_seconds},
+        )
+        await asyncio.sleep(0)
+        for task in tasks:
+            task.cancel()
+
+        gather_future = asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            results = await asyncio.wait_for(asyncio.shield(gather_future), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            still_active = [
+                self._tasks[task].name
+                for task in tasks
+                if task in self._tasks and not task.done()
+            ]
+            self._logger.error(
+                "Timed out cancelling background tasks",
+                event_type="runtime_task_cancel_timeout",
+                metadata={"tasks": still_active, "timeout_seconds": timeout_seconds},
+            )
+            return []
+
+        self._logger.info(
+            "Background task cancellation complete",
+            event_type="runtime_task_cancel_all_complete",
+            metadata={"cancelled": len(tasks), "active_tasks": self.active_count},
+        )
+        return results

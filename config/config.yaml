@@ -201,3 +201,58 @@ advanced_features:
     enabled: true
     explanation_detail_level: "high"  # low, medium, high
     llm_backend: "local"  # local, api
+
+# Centrality Analysis for Enhanced Mule Detection (Issue #5)
+# Detects sophisticated fraud patterns: layering chains, super-mules, fraud rings
+centrality_analysis:
+  enabled: true
+  
+  # Layering Chain Detection (Betweenness Centrality)
+  layering_chains:
+    enabled: true
+    betweenness_threshold: 0.6
+    min_chain_length: 3
+    max_chain_length: 10
+    time_window_hours: 24
+    detection_weight: 0.30  # 30% of overall mule score
+  
+  # Super-Mule Detection (PageRank Analysis)
+  super_mules:
+    enabled: true
+    pagerank_threshold: 0.7
+    min_incoming_transfers: 5
+    volume_percentile_threshold: 0.75
+    detection_weight: 0.35  # 35% of overall mule score
+    pagerank_iterations: 100
+    pagerank_damping_factor: 0.85
+  
+  # Fraud Ring Detection (Clique Detection)
+  fraud_rings:
+    enabled: true
+    min_clique_size: 3
+    max_clique_size: 8
+    density_threshold: 0.75  # 75% complete graph
+    detection_weight: 0.25  # 25% of overall mule score
+    max_graph_nodes: 50000  # Use approximation for larger graphs
+  
+  # Temporal Decay Weighting
+  temporal_decay:
+    enabled: true
+    decay_rate: 0.1  # exponential decay constant
+    # decay = e^(-decay_rate × days_elapsed)
+    # Examples:
+    #   Today (0 days): decay = 1.0
+    #   7 days ago: decay ≈ 0.49
+    #   30 days ago: decay ≈ 0.05
+    #   90 days ago: decay ≈ 0.0001
+  
+  # Performance Settings
+  performance:
+    use_approximation_large_graphs: true
+    cache_centrality_results: true
+    cache_ttl_seconds: 3600
+    max_processing_time_seconds: 5  # timeout for large networks
+  
+  # Integration with existing detections
+  combine_with_existing: true
+  combined_scoring_method: "weighted_average"  # weighted_average, max_score, union

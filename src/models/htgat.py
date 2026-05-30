@@ -21,12 +21,66 @@ try:
     TORCH_GEOMETRIC_AVAILABLE = True
 except ImportError:
     print("⚠️  torch_geometric not available - HTGAT will use fallback implementation")
-    MessagePassing = object  # Fallback base class
+    class MessagePassing(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+
+        def propagate(self, edge_index, x, edge_type, edge_attr=None):
+            src, dst = edge_index
+            x_src, x_dst = x
+            messages = self.message(
+                x_i=x_dst[dst],
+                x_j=x_src[src],
+                edge_type=edge_type,
+                edge_attr=edge_attr,
+                index=dst,
+                ptr=None,
+                size_i=x_dst.size(0),
+            )
+            out = torch.zeros_like(x_dst)
+            out.index_add_(0, dst, messages)
+            return out
     TORCH_GEOMETRIC_AVAILABLE = False
     
     def softmax(src, index, num_nodes=None):
-        """Fallback softmax implementation"""
-        return torch.softmax(src, dim=-1)
+        """Scatter softmax matching torch_geometric.utils.softmax.
+
+        Normalises each target node's incoming edge weights so that, for every
+        target node i, the attention coefficients over all edges pointing into i
+        sum to 1.  The original one-liner (torch.softmax(src, dim=-1)) ignored
+        `index` entirely and normalised each edge's logit vector against itself
+        across the head dimension — producing non-normalised attention weights
+        with no error raised (fix #135).
+
+        Args:
+            src:       [num_edges, num_heads]  raw attention logits
+            index:     [num_edges]             target-node index for each edge
+            num_nodes: int, optional           total number of nodes
+        Returns:
+            [num_edges, num_heads] attention weights; per-node sums == 1
+        """
+        if num_nodes is None:
+            num_nodes = int(index.max().item()) + 1
+
+        # -- Step 1: per-node max for numerical stability -----------------
+        src_max = torch.full(
+            (num_nodes, src.size(-1)), float('-inf'),
+            dtype=src.dtype, device=src.device,
+        )
+        idx = index.unsqueeze(-1).expand_as(src)
+        src_max.scatter_reduce_(0, idx, src, reduce='amax', include_self=True)
+        # Nodes with no incoming edges get -inf; clamp so exp doesn't NaN.
+        src_max = src_max.clamp(min=0)
+
+        # -- Step 2: shifted exp ------------------------------------------
+        out = (src - src_max[index]).exp()
+
+        # -- Step 3: per-node sum -----------------------------------------
+        out_sum = torch.zeros_like(src_max)
+        out_sum.scatter_add_(0, idx, out)
+
+        # -- Step 4: normalise --------------------------------------------
+        return out / (out_sum[index] + 1e-16)
 
 
 class HTGATConv(MessagePassing):

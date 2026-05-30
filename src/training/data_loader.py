@@ -1,7 +1,9 @@
+import hashlib
+import os
+
 import torch
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.data import HeteroData
-import os
 
 class AegisGraphLoader:
     """
@@ -18,8 +20,18 @@ class AegisGraphLoader:
         """Loads the HeteroData object and injects temporal attributes if missing."""
         if not os.path.exists(self.graph_path):
             raise FileNotFoundError(f"Graph file not found at {self.graph_path}. Run synthetic generator first.")
-            
-        data = torch.load(self.graph_path, weights_only=False)
+
+        expected_hash = os.getenv("AEGIS_GRAPH_SHA256")
+        if not expected_hash:
+            raise RuntimeError("AEGIS_GRAPH_SHA256 is unset; refusing to load graph artifact")
+
+        with open(self.graph_path, "rb") as f:
+            actual_hash = hashlib.sha256(f.read()).hexdigest()
+            if actual_hash != expected_hash:
+                raise RuntimeError("Graph artifact hash mismatch; refusing to load")
+
+            f.seek(0)
+            data = torch.load(f, weights_only=False)
         
         # PyG Temporal Sampling requires a 'time' attribute on the target nodes.
         # If our synthetic graph didn't explicitly define node timestamps, we mock them sequentially.

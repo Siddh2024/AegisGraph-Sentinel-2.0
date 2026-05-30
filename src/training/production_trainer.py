@@ -17,8 +17,6 @@ import numpy as np
 import logging
 from typing import Dict, Tuple, List, Optional
 from dataclasses import dataclass, asdict
-from datetime import datetime
-import json
 import yaml
 from pathlib import Path
 
@@ -32,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 from .losses import FocalLoss
+from .model_registry import ModelRegistry
 
 
 @dataclass
@@ -104,6 +103,7 @@ class ProductionTrainer:
         
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.registry = ModelRegistry(registry_dir=self.output_dir)
         
         # Training configuration
         self.learning_rate = config.get('learning_rate', 0.001)
@@ -460,16 +460,11 @@ class ProductionTrainer:
             'metrics': metrics.to_dict(),
             'config': self.config,
         }
-        
-        # Temporary checkpoint (always save)
-        ckpt_path = self.output_dir / "htgnn_checkpoint.pt"
-        torch.save(checkpoint, ckpt_path)
-        
-        # Best checkpoint
+
+        version_id = self.registry.save_version(epoch, checkpoint, metrics.to_dict())
         if is_best:
-            best_path = self.output_dir / "htgnn_best.pt"
-            torch.save(checkpoint, best_path)
-            logger.info(f"Saved best model to {best_path}")
+            self.registry.promote_champion(version_id)
+            logger.info(f"Promoted {version_id} to champion")
     
     def _save_results(self, results: Dict):
         """Save training results to YAML"""
@@ -479,16 +474,8 @@ class ProductionTrainer:
         logger.info(f"Saved results to {results_path}")
     
     def load_best_model(self) -> bool:
-        """Load best model from checkpoint"""
-        best_path = self.output_dir / "htgnn_best.pt"
-        if not best_path.exists():
-            logger.warning(f"No best model found at {best_path}")
-            return False
-        
-        checkpoint = torch.load(best_path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(checkpoint['model_state'])
-        logger.info(f"Loaded best model from {best_path}")
-        return True
+        """Load the champion model from the registry."""
+        return self.registry.load_champion(self.model, self.device)
 
 
 class SimpleGraphDataset(Dataset):

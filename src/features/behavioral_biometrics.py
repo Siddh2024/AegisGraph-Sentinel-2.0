@@ -89,6 +89,10 @@ class KeystrokeDynamicsAnalyzer:
         ]
         
         # Compute statistics
+        session_duration = keystroke_sequence.session_end - keystroke_sequence.session_start
+        if session_duration <= 0:
+            return self._empty_features()
+
         features = {
             # Hold time statistics (ms)
             'hold_time_mean': np.mean(hold_times) * 1000,
@@ -104,7 +108,7 @@ class KeystrokeDynamicsAnalyzer:
             
             # Typing speed
             'wpm': self._compute_wpm(keystroke_sequence),
-            'chars_per_second': len(events) / (keystroke_sequence.session_end - keystroke_sequence.session_start),
+            'chars_per_second': len(events) / session_duration,
             
             # Error metrics
             'error_rate': self._compute_error_rate(events),
@@ -116,7 +120,7 @@ class KeystrokeDynamicsAnalyzer:
             
             # Session metadata
             'total_events': len(events),
-            'session_duration': keystroke_sequence.session_end - keystroke_sequence.session_start,
+            'session_duration': session_duration,
         }
         
         return features
@@ -388,17 +392,23 @@ def analyze_keystroke_data(
     Returns:
         Dictionary with features and stress indicators
     """
-    # Create keystroke events
+    # Validate inputs to prevent min()/max() crashes on empty or mismatched arrays
+    if not press_times or not release_times or len(press_times) != len(release_times):
+        analyzer = KeystrokeDynamicsAnalyzer()
+        features = analyzer._empty_features()
+        return {**features, **analyzer.detect_stress(features)}
+
+    # Handle optional parameters gracefully
     if key_ids is None:
         key_ids = [f"key_{i}" for i in range(len(press_times))]
     if is_backspace is None:
         is_backspace = [False] * len(press_times)
-    
+
     events = [
         KeystrokeEvent(kid, pt, rt, bs)
         for kid, pt, rt, bs in zip(key_ids, press_times, release_times, is_backspace)
     ]
-    
+
     sequence = KeystrokeSequence(
         events=events,
         session_start=min(press_times),

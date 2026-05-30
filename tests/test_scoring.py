@@ -5,13 +5,20 @@ from unittest.mock import patch
 
 import pytest
 
-from src.inference.risk_scorer import compute_risk_score as inference_compute_risk_score
-from src.scoring import (
-    EdgeCaseHandler,
-    RiskScorer,
-    ScoreCalculator,
-    ThresholdConfig,
-)
+# Handle optional torch dependency for inference.risk_scorer
+try:
+    from src.inference.risk_scorer import compute_risk_score as inference_compute_risk_score
+    from src.scoring import (
+        EdgeCaseHandler,
+        RiskScorer,
+        ScoreCalculator,
+        ThresholdConfig,
+    )
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 
 
 def test_normalize_score_bounds_and_scaling():

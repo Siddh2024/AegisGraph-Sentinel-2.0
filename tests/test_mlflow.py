@@ -1,6 +1,9 @@
-import mlflow
 import shutil
 import os
+
+import pytest
+
+mlflow = pytest.importorskip("mlflow")
 
 
 def test_mlflow_integration():

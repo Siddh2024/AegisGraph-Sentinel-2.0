@@ -27,21 +27,25 @@ def check_dependencies():
     print("\nChecking dependencies...")
     
     required_packages = [
-        'torch',
-        'torch_geometric',
-        'networkx',
-        'numpy',
-        'pandas',
-        'fastapi',
-        'uvicorn',
-        'pydantic',
-        'yaml',
+        ('networkx', 'networkx'),
+        ('numpy', 'numpy'),
+        ('pandas', 'pandas'),
+        ('scipy', 'scipy'),
+        ('torch', 'torch'),
+        ('fastapi', 'fastapi'),
+        ('uvicorn', 'uvicorn'),
+        ('pydantic', 'pydantic'),
+        ('PyYAML', 'yaml'),
+        ('python-dotenv', 'dotenv'),
+        ('slowapi', 'slowapi'),
+        ('httpx', 'httpx'),
+        ('pytest', 'pytest'),
+        ('pytest-cov', 'pytest_cov'),
     ]
     
     missing = []
-    for package in required_packages:
-        package_name = package.replace('_', '-')  # Handle torch_geometric
-        spec = importlib.util.find_spec(package.replace('-', '_'))
+    for package_name, import_name in required_packages:
+        spec = importlib.util.find_spec(import_name)
         if spec is None:
             missing.append(package_name)
             print(f"❌ {package_name}")

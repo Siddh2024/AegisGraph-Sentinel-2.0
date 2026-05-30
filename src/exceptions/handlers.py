@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Union
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from ..observability.audit_logger import get_audit_logger
@@ -134,14 +135,14 @@ async def validation_exception_handler(
         exc_type="ValidationException",
         message="Request validation failed",
         status_code=422,
-        metadata={"errors": exc.errors(), "path": request.url.path},
+        metadata={"errors": jsonable_encoder(exc.errors()), "path": request.url.path},
     )
     content = build_error_payload(
         code=ErrorCode.VALIDATION_ERROR,
         type_name="ValidationException",
         message="Request validation failed",
         request_id=request_id,
-        details={"validation_errors": exc.errors()},
+        details={"validation_errors": jsonable_encoder(exc.errors())},
     )
     return JSONResponse(
         status_code=422,

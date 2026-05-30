@@ -1,9 +1,11 @@
-import os
 import threading
 from collections import defaultdict, deque
+from typing import Any, Optional
 
 import networkx as nx
 import numpy as np
+
+from ..config import get_settings
 
 # Optional Redis import for production scaling
 try:
@@ -25,20 +27,32 @@ class LateralMovementDetector:
         history_size=10,
         std_multiplier=2.0,
         spike_multiplier=3.0,
-        risk_penalty=0.25
+        risk_penalty=0.25,
+        graph_service: Optional[Any] = None,
     ):
         self.history_size = history_size
         self.std_multiplier = std_multiplier
         self.spike_multiplier = spike_multiplier
         self.risk_penalty = risk_penalty
+        self.graph_service = graph_service
 
-        # Check for Redis URL in environment variables
-        self.redis_url = os.getenv("REDIS_URL")
+        runtime_settings = get_settings()
+        self.redis_url = runtime_settings.innovations.redis_url
         self.use_redis = REDIS_AVAILABLE and self.redis_url
 
-        if self.use_redis:
+        # Check if graph service is active Neo4j provider
+        self.use_neo4j = False
+        if self.graph_service is not None:
+            # Dynamically check if active
+            self.use_neo4j = getattr(self.graph_service, "is_active", False)
+
+        if self.use_neo4j:
+            print("LateralMovementDetector: Using active Neo4j Graph Database Backend.")
+        elif self.use_redis:
             print("LateralMovementDetector: Connected to Redis Backend for multi-worker scaling.")
             self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
+            self._graph_cache = {}
+            self.redis_client.setnx("aegis:graph:version", 0)
         else:
             print("LateralMovementDetector: Using Thread-Safe In-Memory Backend (Single Worker).")
             # In-memory fallbacks protected by a Mutex lock
@@ -48,14 +62,22 @@ class LateralMovementDetector:
             )
             self.active_graph = nx.DiGraph()
 
-    def update_graph(self, src_account, dst_account):
+    def update_graph(self, src_account, dst_account, amount: float = 1.0, timestamp: Optional[float] = None):
         """Updates the network topology dynamically across all workers."""
+        if self.graph_service is not None and getattr(self.graph_service, "is_active", False):
+            # Neo4j Active Provider execution
+            t = timestamp or time.time()
+            self.graph_service.add_transaction(src_account, dst_account, amount, t)
+            return
+
         if self.use_redis:
-            # Atomic cross-worker edge weight increment
-            edge_key = f"aegis:edges:{src_account}"
-            self.redis_client.hincrby(edge_key, dst_account, 1)
-            # Track active nodes for fast sub-graph reconstruction
-            self.redis_client.sadd("aegis:nodes", src_account, dst_account)
+            # Atomic cross-worker edge weight increment plus version bump for cache invalidation.
+            pipe = self.redis_client.pipeline(transaction=True)
+            pipe.hincrby(f"aegis:edges:{src_account}", dst_account, 1)
+            pipe.hincrby(f"aegis:reverse:{dst_account}", src_account, 1)
+            pipe.sadd("aegis:nodes", src_account, dst_account)
+            pipe.incr("aegis:graph:version")
+            pipe.execute()
         else:
             # Thread-safe in-memory update
             with self._lock:
@@ -63,25 +85,58 @@ class LateralMovementDetector:
                     self.active_graph[src_account][dst_account]['weight'] += 1
                 else:
                     self.active_graph.add_edge(src_account, dst_account, weight=1)
+                if self.active_graph.number_of_nodes() > 10000:
+                    nodes_to_remove = list(self.active_graph.nodes())[:100]
+                    self.active_graph.remove_nodes_from(nodes_to_remove)
 
-    def _get_approx_graph(self):
-        """Reconstructs the active graph topology (Redis mode)."""
+    def _get_approx_graph(self, account_id, max_hops=2):
+        """Reconstructs a bounded local graph around an account (Redis mode)."""
+        if self.graph_service is not None and getattr(self.graph_service, "is_active", False):
+            # Extract subgraph from Neo4j dynamically
+            return self.graph_service.get_approx_subgraph(account_id, max_hops)
+
         if not self.use_redis:
             return self.active_graph
 
+        current_version = int(self.redis_client.get("aegis:graph:version") or 0)
+        cached = self._graph_cache.get(account_id)
+        if cached and cached[0] == current_version:
+            return cached[1]
+
         G = nx.DiGraph()
-        nodes = self.redis_client.smembers("aegis:nodes")
-        
-        for src in nodes:
-            edges = self.redis_client.hgetall(f"aegis:edges:{src}")
-            for dst, weight in edges.items():
-                G.add_edge(src, dst, weight=float(weight))
+        frontier = {account_id}
+        visited = {account_id}
+
+        for _ in range(max_hops):
+            next_frontier = set()
+            for node in frontier:
+                outgoing = self.redis_client.hgetall(f"aegis:edges:{node}")
+                for dst, weight in outgoing.items():
+                    G.add_edge(node, dst, weight=float(weight))
+                    if dst not in visited:
+                        next_frontier.add(dst)
+
+                incoming = self.redis_client.hgetall(f"aegis:reverse:{node}")
+                for src, weight in incoming.items():
+                    G.add_edge(src, node, weight=float(weight))
+                    if src not in visited:
+                        next_frontier.add(src)
+
+            visited.update(next_frontier)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        if not G.has_node(account_id):
+            G.add_node(account_id)
+
+        self._graph_cache[account_id] = (current_version, G)
         return G
 
     def _calculate_approx_centrality(self, account_id):
         """Calculates localized betweenness centrality safely."""
-        if self.use_redis:
-            G = self._get_approx_graph()
+        if self.use_neo4j or self.use_redis:
+            G = self._get_approx_graph(account_id)
         else:
             with self._lock:
                 G = self.active_graph.copy()

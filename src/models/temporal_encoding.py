@@ -249,7 +249,7 @@ def compute_time_features(
     if isinstance(timestamp, torch.Tensor):
         timestamp = timestamp.item()
     
-    dt = datetime.datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
     
     return {
         'hour_of_day': dt.hour,

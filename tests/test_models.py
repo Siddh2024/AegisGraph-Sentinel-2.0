@@ -4,12 +4,21 @@ Unit tests for AegisGraph Sentinel models
 # Working on model unit tests
 
 import pytest
-import torch
-import numpy as np
 
-from src.models.htgat import HTGATConv, HTGAT
-from src.models.temporal_encoding import TemporalEncoding
-from src.models.risk_model import FraudDetectionModel
+# Handle optional torch dependency
+try:
+    import torch
+    import numpy as np
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
+
+if TORCH_AVAILABLE:
+    from src.models.htgat import HTGATConv, HTGAT
+    from src.models.temporal_encoding import TemporalEncoding
+    from src.models.risk_model import FraudDetectionModel
 
 
 class TestHTGATConv:

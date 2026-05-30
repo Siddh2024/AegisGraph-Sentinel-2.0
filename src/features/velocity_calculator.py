@@ -10,6 +10,7 @@ Computes velocity-based fraud indicators:
 # Working on velocity-based fraud detection improvements
 
 import numpy as np
+from datetime import datetime, timezone
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 import networkx as nx
@@ -89,9 +90,9 @@ class VelocityCalculator:
         
         energy = 0.0
         for i in range(len(transactions) - 1):
-            delta_amount = transactions[i].amount
-            delta_time = transactions[i+1].timestamp - transactions[i].timestamp
-            
+            delta_amount = transactions[i + 1].amount - transactions[i].amount
+            delta_time = transactions[i + 1].timestamp - transactions[i].timestamp
+
             if delta_time > 0:
                 energy += (delta_amount ** 2) / delta_time
         
@@ -122,15 +123,22 @@ class VelocityCalculator:
                 'avg_hop_time': 0.0,
             }
         
-        # Compute network distances
+        # Compute network distances with a per-source SSSP cache so repeated
+        # adjacent pairs do not retraverse the graph.
+        shortest_path_cache: Dict[str, Dict[str, int]] = {}
         total_distance = 0
         for i in range(len(transactions) - 1):
             source = transactions[i].source
             target = transactions[i+1].target
             
-            try:
-                distance = nx.shortest_path_length(graph, source, target)
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
+            if source not in shortest_path_cache:
+                try:
+                    shortest_path_cache[source] = nx.single_source_shortest_path_length(graph, source)
+                except nx.NodeNotFound:
+                    shortest_path_cache[source] = {}
+
+            distance = shortest_path_cache[source].get(target)
+            if distance is None:
                 distance = len(transactions)  # Use chain length as proxy
             
             total_distance += distance
@@ -283,6 +291,8 @@ class VelocityCalculator:
 
         if isinstance(transactions, pd.DataFrame):
             records = transactions.to_dict(orient='records')
+        elif isinstance(transactions, dict):
+            records = [transactions]
         else:
             records = list(transactions)
 
@@ -295,11 +305,41 @@ class VelocityCalculator:
             source = txn.get('source') or txn.get('from') or txn.get('from_account') or txn.get('account_id') or txn.get('source_account') or f'SRC_{index}'
             target = txn.get('target') or txn.get('to') or txn.get('to_account') or txn.get('target_account') or f'TGT_{index}'
             amount = float(txn.get('amount', 0.0))
-            timestamp = float(txn.get('timestamp', index))
+            timestamp = self._normalize_timestamp(txn.get('timestamp'), float(index))
             txn_id = txn.get('txn_id') or txn.get('transaction_id') or f'txn_{index}'
             normalized.append(Transaction(source=source, target=target, amount=amount, timestamp=timestamp, txn_id=txn_id))
 
         return normalized
+
+    def _normalize_timestamp(self, value, fallback: float) -> float:
+        """Coerce timestamp inputs into a float seconds-since-epoch value."""
+        if value is None:
+            return fallback
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, datetime):
+            dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return float(dt.timestamp())
+
+        if hasattr(value, "to_pydatetime"):
+            try:
+                dt = value.to_pydatetime()
+                dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                return float(dt.timestamp())
+            except Exception:
+                return fallback
+
+        if isinstance(value, str):
+            try:
+                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                return float(dt.timestamp())
+            except ValueError:
+                return fallback
+
+        return fallback
 
     def _burst_score_from_windows(self, recent: List[Transaction], baseline: List[Transaction]) -> float:
         """Return a scalar burst score for compatibility callers."""

@@ -4,12 +4,21 @@ Unit tests for feature extraction modules
 # Working on feature extraction testing
 
 import pytest
-import numpy as np
-import pandas as pd
 
-from src.features.behavioral_biometrics import KeystrokeDynamicsAnalyzer
-from src.features.velocity_calculator import VelocityCalculator
-from src.features.entropy_calculator import GraphEntropyCalculator
+# Handle optional pandas/numpy dependencies
+try:
+    import numpy as np
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(not PANDAS_AVAILABLE, reason="pandas/numpy not installed")
+
+if PANDAS_AVAILABLE:
+    from src.features.behavioral_biometrics import KeystrokeDynamicsAnalyzer
+    from src.features.velocity_calculator import Transaction, VelocityCalculator
+    from src.features.entropy_calculator import GraphEntropyCalculator
 
 
 class TestKeystrokeDynamics:
@@ -108,6 +117,42 @@ class TestVelocityCalculator:
         velocity = calculator.calculate_chain_velocity(transactions)
         
         assert velocity > 0
+
+    def test_chain_velocity_reuses_single_source_shortest_paths(self, monkeypatch):
+        """Test that repeated sources reuse cached shortest-path traversals."""
+        import networkx as nx
+
+        calculator = VelocityCalculator()
+        graph = nx.Graph()
+        graph.add_edges_from([
+            ('A', 'B'),
+            ('B', 'C'),
+            ('C', 'D'),
+        ])
+
+        transactions = [
+            Transaction(source='A', target='B', amount=100, timestamp=0, txn_id='txn-1'),
+            Transaction(source='A', target='C', amount=100, timestamp=10, txn_id='txn-2'),
+            Transaction(source='A', target='D', amount=100, timestamp=20, txn_id='txn-3'),
+        ]
+
+        call_count = {"count": 0}
+        original = nx.single_source_shortest_path_length
+
+        def counting_single_source_shortest_path_length(*args, **kwargs):
+            call_count["count"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "src.features.velocity_calculator.nx.single_source_shortest_path_length",
+            counting_single_source_shortest_path_length,
+        )
+
+        features = calculator.compute_chain_velocity(transactions, graph)
+
+        assert call_count["count"] == 1
+        assert features["total_distance"] == 5
+        assert features["chain_velocity"] == 0.25
 
 
 class TestGraphEntropyCalculator:

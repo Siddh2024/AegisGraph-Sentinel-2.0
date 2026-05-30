@@ -6,11 +6,11 @@ Tests honeypot, blockchain, and keystroke stress detection
 
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 API_BASE = "http://localhost:8000"
 
-def test_high_risk_transaction():
+def run_high_risk_transaction():
     """Test transaction that should trigger honeypot and blockchain"""
     print("=" * 60)
     print("TEST 1: High-Risk Transaction (Mule-to-Mule Transfer)")
@@ -23,7 +23,7 @@ def test_high_risk_transaction():
         "amount": 500000,
         "currency": "INR",
         "mode": "IMPS",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "biometrics": {
             "hold_times": [250, 300, 275, 280, 290],  # Slow/stressed typing
             "flight_times": [400, 380, 420, 410, 390]   # Hesitation between keys
@@ -89,7 +89,7 @@ def test_high_risk_transaction():
         return None
 
 
-def test_normal_transaction():
+def run_normal_transaction():
     """Test normal transaction that should not trigger innovations"""
     print("\n\n" + "=" * 60)
     print("TEST 2: Normal Transaction (Low Risk)")
@@ -102,7 +102,7 @@ def test_normal_transaction():
         "amount": 5000,
         "currency": "INR",
         "mode": "UPI",
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     }
     
     print(f"\n📤 Sending transaction: {payload['transaction_id']}")
@@ -177,10 +177,10 @@ def main():
     print("=" * 60)
     
     # Test 1: High-risk transaction
-    high_risk_result = test_high_risk_transaction()
+    high_risk_result = run_high_risk_transaction()
     
     # Test 2: Normal transaction
-    normal_result = test_normal_transaction()
+    normal_result = run_normal_transaction()
     
     # Test 3: Check active honeypots
     honeypots = check_active_honeypots()

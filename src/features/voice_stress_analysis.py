@@ -98,6 +98,8 @@ class VoiceStressAnalyzer:
             return self._mock_features()
         
         sr = sample_rate or self.sample_rate
+        if audio is None or audio.size == 0:
+            return self._mock_features()
         
         # Ensure mono
         if len(audio.shape) > 1:

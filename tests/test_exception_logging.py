@@ -239,7 +239,7 @@ class TestApiIntegration:
         payload = {
             "transaction_id": "compat_001",
             "amount": 100.0,
-            "timestamp": 1234567890.0,
+            "timestamp": 1779883200.0,
             "from_account": "user_a",
             "to_account": "user_b",
         }
@@ -254,7 +254,7 @@ class TestApiIntegration:
 
     def test_http_exception_standardized_json(self):
         client = TestClient(app)
-        response = client.post("/api/v1/explain", json={})
+        response = client.post("/api/v1/explain", json={"decision": "BLOCK", "risk_score": 0.9})
         assert response.status_code in (503, 500)
         body = response.json()
         assert "error" in body

@@ -163,8 +163,8 @@ class Trainer:
             
             # Track metrics
             epoch_loss += loss.item()
-            all_preds.extend(outputs['risk'].detach().cpu().numpy())
-            all_labels.extend(batch['label'].cpu().numpy())
+            all_preds.extend(np.atleast_1d(outputs['risk'].detach().cpu().numpy()))
+            all_labels.extend(np.atleast_1d(batch['label'].cpu().numpy()))
             
             # Update progress bar
             pbar.set_postfix({'loss': loss.item()})
@@ -212,8 +212,8 @@ class Trainer:
                 
                 # Track metrics
                 epoch_loss += loss.item()
-                all_preds.extend(outputs['risk'].cpu().numpy())
-                all_labels.extend(batch['label'].cpu().numpy())
+                all_preds.extend(np.atleast_1d(outputs['risk'].cpu().numpy()))
+                all_labels.extend(np.atleast_1d(batch['label'].cpu().numpy()))
         
         # Compute epoch metrics
         avg_loss = epoch_loss / len(val_loader)

@@ -24,11 +24,13 @@ Pilot Results (HDFC Mumbai, 6 months):
 
 import json
 import time
+import threading
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from enum import Enum
 import uuid
+import secrets
 import networkx as nx
 
 
@@ -104,9 +106,11 @@ class HoneypotEscrowManager:
         self.activation_threshold = activation_threshold
         self.auto_release_hours = auto_release_hours
         self.escrow_prefix = escrow_prefix
+        self._lock = threading.RLock()
         
         # Active honeypots
         self.active_honeypots: Dict[str, HoneypotTransaction] = {}
+        self._active_honeypots_by_account: Dict[str, HoneypotTransaction] = {}
         
         # Historical honeypots
         self.honeypot_history: List[HoneypotTransaction] = []
@@ -175,8 +179,8 @@ class HoneypotEscrowManager:
         Returns:
             HoneypotTransaction object
         """
-        honeypot_id = f"HP_{uuid.uuid4().hex[:12].upper()}"
-        escrow_account = f"{self.escrow_prefix}{uuid.uuid4().hex[:16].upper()}"
+        honeypot_id = f"HP_{secrets.token_hex(6).upper()}"
+        escrow_account = f"{self.escrow_prefix}{secrets.token_hex(8).upper()}"
         
         activation_time = datetime.now()
         auto_release_time = activation_time + timedelta(hours=self.auto_release_hours)
@@ -203,8 +207,10 @@ class HoneypotEscrowManager:
             release_reason=None,
         )
         
-        self.active_honeypots[honeypot_id] = honeypot
-        self.stats['total_activated'] += 1
+        with self._lock:
+            self.active_honeypots[honeypot_id] = honeypot
+            self._active_honeypots_by_account[target_account] = honeypot
+            self.stats['total_activated'] += 1
         
         print(f"🍯 HONEYPOT ACTIVATED: {honeypot_id}")
         print(f"   Transaction: {transaction_id}")
@@ -234,12 +240,10 @@ class HoneypotEscrowManager:
         Returns:
             Alert dictionary if honeypot triggered, None otherwise
         """
-        # Find honeypot for this account
-        honeypot = None
-        for hp_id, hp in self.active_honeypots.items():
-            if hp.target_account == account and not hp.released:
-                honeypot = hp
-                break
+        with self._lock:
+            honeypot = self._active_honeypots_by_account.get(account)
+            if honeypot is not None and honeypot.released:
+                honeypot = None
         
         if honeypot is None:
             return None  # Not a honeypot account
@@ -251,13 +255,14 @@ class HoneypotEscrowManager:
             'amount': amount,
             'location': location,
         }
-        honeypot.withdrawal_attempts.append(attempt)
-        honeypot.status = HoneypotStatus.WITHDRAWAL_ATTEMPTED
-        
-        # Generate police alert
-        alert = self._generate_police_alert(honeypot, attempt)
-        honeypot.alerts_sent.append(alert)
-        honeypot.status = HoneypotStatus.ALERT_SENT
+        with self._lock:
+            honeypot.withdrawal_attempts.append(attempt)
+            honeypot.status = HoneypotStatus.WITHDRAWAL_ATTEMPTED
+
+            # Generate police alert
+            alert = self._generate_police_alert(honeypot, attempt)
+            honeypot.alerts_sent.append(alert)
+            honeypot.status = HoneypotStatus.ALERT_SENT
         
         print(f"🚨 WITHDRAWAL ATTEMPT DETECTED!")
         print(f"   Honeypot: {honeypot.honeypot_id}")
@@ -332,37 +337,41 @@ class HoneypotEscrowManager:
         Returns:
             True if recorded successfully
         """
-        if honeypot_id not in self.active_honeypots:
-            return False
-        
-        honeypot = self.active_honeypots[honeypot_id]
-        honeypot.status = HoneypotStatus.ARRESTED
-        
-        # Update statistics
-        self.stats['total_arrests'] += 1
-        self.stats['total_recovered'] += honeypot.amount
-        
-        # Calculate response time
-        first_withdrawal = honeypot.withdrawal_attempts[0] if honeypot.withdrawal_attempts else None
-        if first_withdrawal:
-            withdrawal_time = datetime.fromisoformat(first_withdrawal['timestamp'])
-            arrest_time = datetime.fromisoformat(arrest_details['arrest_time'])
-            response_minutes = (arrest_time - withdrawal_time).total_seconds() / 60
-            
-            # Update average response time
-            total_arrests = self.stats['total_arrests']
-            old_avg = self.stats['average_response_time_minutes']
-            new_avg = ((old_avg * (total_arrests - 1)) + response_minutes) / total_arrests
-            self.stats['average_response_time_minutes'] = new_avg
+        with self._lock:
+            if honeypot_id not in self.active_honeypots:
+                return False
+
+            honeypot = self.active_honeypots[honeypot_id]
+            honeypot.status = HoneypotStatus.ARRESTED
+
+            # Update statistics
+            self.stats['total_arrests'] += 1
+            self.stats['total_recovered'] += honeypot.amount
+
+            # Calculate response time
+            first_withdrawal = honeypot.withdrawal_attempts[0] if honeypot.withdrawal_attempts else None
+            if first_withdrawal:
+                withdrawal_time = datetime.fromisoformat(first_withdrawal['timestamp'])
+                arrest_time = datetime.fromisoformat(arrest_details['arrest_time'])
+                response_minutes = (arrest_time - withdrawal_time).total_seconds() / 60
+                
+                # Update average response time
+                total_arrests = self.stats['total_arrests']
+                old_avg = self.stats['average_response_time_minutes']
+                new_avg = ((old_avg * (total_arrests - 1)) + response_minutes) / total_arrests
+                self.stats['average_response_time_minutes'] = new_avg
         
         print(f"✅ ARREST CONFIRMED: {honeypot_id}")
         print(f"   Mule: {honeypot.target_account}")
         print(f"   Amount Recovered: ₹{honeypot.amount:,.2f}")
         
-        # Move to history
-        self.honeypot_history.append(honeypot)
-        del self.active_honeypots[honeypot_id]
-        
+        with self._lock:
+            self.honeypot_history.append(honeypot)
+            if len(self.honeypot_history) > 10000:
+                self.honeypot_history = self.honeypot_history[-5000:]
+            del self.active_honeypots[honeypot_id]
+            self._active_honeypots_by_account.pop(honeypot.target_account, None)
+
         return True
     
     def check_auto_release(self):
@@ -371,12 +380,13 @@ class HoneypotEscrowManager:
         Called periodically by background task
         """
         now = datetime.now()
-        to_release = []
-        
-        for hp_id, hp in self.active_honeypots.items():
-            if now >= hp.auto_release_time and not hp.released:
-                to_release.append(hp_id)
-        
+        with self._lock:
+            to_release = [
+                hp_id
+                for hp_id, hp in list(self.active_honeypots.items())
+                if now >= hp.auto_release_time and not hp.released
+            ]
+
         for hp_id in to_release:
             self._auto_release_honeypot(hp_id, "No withdrawal attempt within timeout period")
     
@@ -395,11 +405,12 @@ class HoneypotEscrowManager:
         Returns:
             List of account IDs in fraud network
         """
-        if honeypot_id not in self.active_honeypots:
-            return []
-        
-        honeypot = self.active_honeypots[honeypot_id]
-        mule_account = honeypot.target_account
+        with self._lock:
+            if honeypot_id not in self.active_honeypots:
+                return []
+
+            honeypot = self.active_honeypots[honeypot_id]
+            mule_account = honeypot.target_account
         
         # Find connected accounts (depth=2)
         network_members = set([mule_account])
@@ -413,12 +424,12 @@ class HoneypotEscrowManager:
             successors = list(transaction_graph.successors(mule_account))
             network_members.update(successors)
         
-        honeypot.network_members = list(network_members)
-        honeypot.status = HoneypotStatus.NETWORK_TRACED
-        
-        # Count as network dismantled if >5 accounts
-        if len(network_members) > 5:
-            self.stats['total_networks_dismantled'] += 1
+            honeypot.network_members = list(network_members)
+            honeypot.status = HoneypotStatus.NETWORK_TRACED
+
+            # Count as network dismantled if >5 accounts
+            if len(network_members) > 5:
+                self.stats['total_networks_dismantled'] += 1
         
         print(f"🔍 NETWORK TRACED: {honeypot_id}")
         print(f"   Network Size: {len(network_members)} accounts")
@@ -433,7 +444,7 @@ class HoneypotEscrowManager:
     ) -> Dict:
         """Generate police alert for withdrawal attempt"""
         alert = {
-            'alert_id': f"ALERT_{uuid.uuid4().hex[:8].upper()}",
+            'alert_id': f"ALERT_{secrets.token_hex(4).upper()}",
             'timestamp': datetime.now().isoformat(),
             'priority': 'CRITICAL',
             'honeypot_id': honeypot.honeypot_id,
@@ -449,45 +460,52 @@ class HoneypotEscrowManager:
     
     def _auto_release_honeypot(self, honeypot_id: str, reason: str):
         """Auto-release honeypot (false positive safeguard)"""
-        if honeypot_id not in self.active_honeypots:
-            return
-        
-        honeypot = self.active_honeypots[honeypot_id]
-        honeypot.released = True
-        honeypot.release_reason = reason
-        honeypot.status = HoneypotStatus.RELEASED
-        
-        self.stats['total_false_positives'] += 1
+        with self._lock:
+            if honeypot_id not in self.active_honeypots:
+                return
+
+            honeypot = self.active_honeypots[honeypot_id]
+            honeypot.released = True
+            honeypot.release_reason = reason
+            honeypot.status = HoneypotStatus.RELEASED
+            
+            self.stats['total_false_positives'] += 1
         
         print(f"⚠️ AUTO-RELEASE: {honeypot_id}")
         print(f"   Reason: {reason}")
         print(f"   Funds transferred to {honeypot.target_account}")
         
-        # Move to history
-        self.honeypot_history.append(honeypot)
-        del self.active_honeypots[honeypot_id]
+        with self._lock:
+            self.honeypot_history.append(honeypot)
+            if len(self.honeypot_history) > 10000:
+                self.honeypot_history = self.honeypot_history[-5000:]
+            del self.active_honeypots[honeypot_id]
+            self._active_honeypots_by_account.pop(honeypot.target_account, None)
     
     def get_statistics(self) -> Dict:
         """Get honeypot system statistics"""
-        total_activated = max(self.stats['total_activated'], 1)
-        return {
-            'total_activated': self.stats['total_activated'],
-            'total_arrests': self.stats['total_arrests'],
-            'arrest_rate': self.stats['total_arrests'] / total_activated,
-            'networks_dismantled': self.stats['total_networks_dismantled'],
-            'total_recovered': self.stats['total_recovered'],
-            'false_positives': self.stats['total_false_positives'],
-            'false_positive_rate': self.stats['total_false_positives'] / total_activated,
-            'avg_time_to_arrest_minutes': self.stats['average_response_time_minutes'],
-            'active_honeypots': len(self.active_honeypots),
-            'arrests_today': 0,  # TODO: Track daily stats
-            'recovered_today': 0.0,  # TODO: Track daily stats
-        }
+        with self._lock:
+            total_activated = max(self.stats['total_activated'], 1)
+            return {
+                'total_activated': self.stats['total_activated'],
+                'total_arrests': self.stats['total_arrests'],
+                'arrest_rate': self.stats['total_arrests'] / total_activated,
+                'networks_dismantled': self.stats['total_networks_dismantled'],
+                'total_recovered': self.stats['total_recovered'],
+                'false_positives': self.stats['total_false_positives'],
+                'false_positive_rate': self.stats['total_false_positives'] / total_activated,
+                'avg_time_to_arrest_minutes': self.stats['average_response_time_minutes'],
+                'active_honeypots': len(self.active_honeypots),
+                'arrests_today': 0,  # TODO: Track daily stats
+                'recovered_today': 0.0,  # TODO: Track daily stats
+            }
     
     def get_active_honeypots(self) -> List[Dict]:
         """Get list of active honeypots"""
         results = []
-        for hp in self.active_honeypots.values():
+        with self._lock:
+            honeypots = list(self.active_honeypots.values())
+        for hp in honeypots:
             time_remaining_secs = max(0, (hp.auto_release_time - datetime.now()).total_seconds())
             
             # Determine location from last withdrawal attempt

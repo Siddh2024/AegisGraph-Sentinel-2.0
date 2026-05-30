@@ -47,3 +47,88 @@ def build_error_from_aegis_exception(
         request_id=request_id,
         details=exc.details,
     )
+
+
+def build_validation_error_payload(
+    *,
+    field: str,
+    value: Any,
+    constraint: str,
+    suggestion: str,
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a validation error response for a single field."""
+    return build_error_payload(
+        code="VALIDATION_ERROR",
+        type_name="ValidationError",
+        message=f"Validation failed for field '{field}'",
+        request_id=request_id,
+        details={
+            "field": field,
+            "value": str(value) if not isinstance(value, (str, int, float, bool)) else value,
+            "constraint": constraint,
+            "suggestion": suggestion,
+        },
+    )
+
+
+def build_multi_field_validation_error_payload(
+    *,
+    errors: list[Dict[str, Any]],
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a validation error response for multiple fields."""
+    return build_error_payload(
+        code="VALIDATION_ERROR",
+        type_name="ValidationError",
+        message="Validation failed for multiple fields",
+        request_id=request_id,
+        details={
+            "field_errors": errors,
+        },
+    )
+
+
+def build_rate_limit_error_payload(
+    *,
+    retry_after_seconds: int,
+    limit_type: str = "account",
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a rate limit error response."""
+    return build_error_payload(
+        code="RATE_LIMIT_EXCEEDED",
+        type_name="RateLimitError",
+        message=f"Rate limit exceeded for {limit_type}",
+        request_id=request_id,
+        details={
+            "limit_type": limit_type,
+            "retry_after_seconds": retry_after_seconds,
+        },
+    )
+
+
+def build_pydantic_validation_errors(
+    *,
+    errors: list[Dict[str, Any]],
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build an error response from Pydantic validation errors."""
+    formatted_errors = []
+    for error in errors:
+        loc = error.get("loc", ())
+        msg = error.get("msg", "Validation error")
+        formatted_errors.append({
+            "field": ".".join(str(l) for l in loc) if loc else "unknown",
+            "message": msg,
+        })
+    
+    return build_error_payload(
+        code="VALIDATION_ERROR",
+        type_name="ValidationError",
+        message=f"Validation failed: {len(formatted_errors)} error(s)",
+        request_id=request_id,
+        details={
+            "field_errors": formatted_errors,
+        },
+    )

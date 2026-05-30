@@ -30,6 +30,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+import ipaddress
 
 
 @dataclass
@@ -95,6 +96,14 @@ class PredictiveMuleScorer:
         self.device_history: Dict[str, int] = {}  # device_id -> count
         self.ip_history: Dict[str, int] = {}  # ip -> count
         self.referral_history: Dict[str, int] = {}  # referral_code -> count
+
+    def _normalize_referral_code(self, referral_code: Optional[str]) -> Optional[str]:
+        """Normalize referral codes so empty values do not poison the same bucket."""
+        if not referral_code:
+            return None
+
+        normalized = referral_code.strip().lower()
+        return normalized or None
     
     def score_account_opening(
         self,
@@ -132,7 +141,7 @@ class PredictiveMuleScorer:
                 referrer_url=kwargs.get('referrer',''),
                 initial_deposit=kwargs.get('initial_deposit',0.0),
                 account_type=kwargs.get('account_type',''),
-                referral_code=kwargs.get('referral',''),
+                referral_code=self._normalize_referral_code(kwargs.get('referral')),
                 existing_customer_connections=kwargs.get('existing_customer_connections',0),
             )
         # Update temporal cache
@@ -212,7 +221,8 @@ class PredictiveMuleScorer:
         # Counts from history
         same_device_count = self.device_history.get(account_data.device_id, 0)
         same_ip_count = self.ip_history.get(account_data.ip_address, 0)
-        same_referral_count = self.referral_history.get(account_data.referral_code or '', 0)
+        referral_code = self._normalize_referral_code(account_data.referral_code)
+        same_referral_count = self.referral_history.get(referral_code, 0) if referral_code else 0
         
         # Temporal clustering
         recent_count = len([
@@ -297,16 +307,16 @@ class PredictiveMuleScorer:
         Score geographic mismatch
         IP location vs stated address
         """
-        # Simple heuristic: check if IP is VPN/proxy
         ip = account_data.ip_address
-        
-        # Removed RFC 1918 private IPs (caused false positives for NAT users)
-        # TODO: Implement proper GeoIP or threat intelligence lookup for VPN/proxy detection
-        suspicious_patterns = []
-        
-        if any(ip.startswith(p) for p in suspicious_patterns):
+
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+        except ValueError:
             return 70.0
-        
+
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_reserved or ip_obj.is_multicast:
+            return 70.0
+
         # Check same IP multiple accounts
         same_ip_count = features['same_ip_count']
         if same_ip_count > 5:
@@ -381,7 +391,7 @@ class PredictiveMuleScorer:
         """
         # In real implementation, check with telecom provider
         # Here we use a simple hash-based simulation
-        phone_hash = int(hashlib.md5(account_data.phone_number.encode()).hexdigest(), 16)
+        phone_hash = int(hashlib.sha256(account_data.phone_number.encode()).hexdigest(), 16)
         simulated_age = phone_hash % 365  # 0-365 days
         
         if simulated_age < 7:
@@ -400,7 +410,6 @@ class PredictiveMuleScorer:
         """
         profession = account_data.profession.lower()
         initial_deposit = features['initial_deposit']
-        age = features['age']
         
         high_risk_professions = ['student', 'unemployed', 'homemaker']
         
@@ -475,6 +484,10 @@ class PredictiveMuleScorer:
             if a.opening_timestamp > cutoff
         ]
         
+        # Limit to prevent memory exhaustion
+        if len(self.recent_openings) > self.MAX_HISTORY_SIZE * 10:
+            self.recent_openings = self.recent_openings[-self.MAX_HISTORY_SIZE * 10:]
+        
         # Update device history
         device_id = account_data.device_id
         self.device_history[device_id] = self.device_history.get(device_id, 0) + 1
@@ -484,9 +497,17 @@ class PredictiveMuleScorer:
         self.ip_history[ip] = self.ip_history.get(ip, 0) + 1
         
         # Update referral history
-        if account_data.referral_code:
-            ref = account_data.referral_code
+        ref = self._normalize_referral_code(account_data.referral_code)
+        if ref:
             self.referral_history[ref] = self.referral_history.get(ref, 0) + 1
+
+        # Prevent unbounded memory growth by capping dictionary sizes
+        MAX_HISTORY_SIZE = 10000
+        for history_dict in (self.device_history, self.ip_history, self.referral_history):
+            if len(history_dict) > MAX_HISTORY_SIZE:
+                keys_to_remove = list(history_dict.keys())[:1000]
+                for k in keys_to_remove:
+                    del history_dict[k]
     
     def get_statistics(self) -> Dict[str, int]:
         """Get statistics about recent account openings"""
@@ -544,7 +565,7 @@ def score_new_account(
         ip_address=ip_address,
         device_id=device_id,
         device_age_days=np.random.randint(10, 365),
-        browser_fingerprint=hashlib.md5(device_id.encode()).hexdigest(),
+        browser_fingerprint=hashlib.sha256(device_id.encode()).hexdigest(),
         referrer_url=None,
         initial_deposit=initial_deposit,
         account_type="Savings",

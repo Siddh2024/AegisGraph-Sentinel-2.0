@@ -21,7 +21,7 @@ from datetime import datetime
 API_URL = "http://localhost:8000"
 HEADERS = {"Content-Type": "application/json"}
 
-class TestResults:
+class VerificationResults:
     """Track test results"""
     def __init__(self):
         self.passed = 0
@@ -50,7 +50,7 @@ class TestResults:
             print(f"{status_icon} {result['name']}: {result['details']}")
 
 
-def test_core_fraud_check():
+def verify_core_fraud_check():
     """Test 1: Core Transaction Fraud Check"""
     print("\n📋 Test 1: Core Fraud Detection Engine")
     print("-" * 60)
@@ -81,7 +81,7 @@ def test_core_fraud_check():
         return 'FAIL', str(e)
 
 
-def test_keystroke_stress_detection():
+def verify_keystroke_stress_detection():
     """Test 2: Keystroke Stress Detection (Innovation 1)"""
     print("\n⌨️  Test 2: Keystroke Stress Detection")
     print("-" * 60)
@@ -115,7 +115,7 @@ def test_keystroke_stress_detection():
         return 'FAIL', str(e)
 
 
-def test_honeypot_escrow():
+def verify_honeypot_escrow():
     """Test 3: Honeypot Virtual Escrow (Innovation 2)"""
     print("\n🍯  Test 3: Honeypot Virtual Escrow")
     print("-" * 60)
@@ -153,7 +153,7 @@ def test_honeypot_escrow():
         return 'FAIL', str(e)
 
 
-def test_mule_identification():
+def verify_mule_identification():
     """Test 4: Predictive Mule Identification (Innovation 3)"""
     print("\n🎯 Test 4: Predictive Mule Identification")
     print("-" * 60)
@@ -192,7 +192,7 @@ def test_mule_identification():
         return 'FAIL', str(e)
 
 
-def test_voice_stress_analysis():
+def verify_voice_stress_analysis():
     """Test 5: Voice Stress Analysis (Innovation 4)"""
     print("\n🔊 Test 5: Voice Stress Analysis")
     print("-" * 60)
@@ -227,7 +227,7 @@ def test_voice_stress_analysis():
         return 'FAIL', str(e)
 
 
-def test_aegis_oracle_explainer():
+def verify_aegis_oracle_explainer():
     """Test 6: Aegis-Oracle Explainer (Innovation 5)"""
     print("\n🔮 Test 6: Aegis-Oracle Explainer")
     print("-" * 60)
@@ -268,7 +268,7 @@ def test_aegis_oracle_explainer():
         return 'FAIL', str(e)
 
 
-def test_blockchain_evidence():
+def verify_blockchain_evidence():
     """Test 7: Blockchain Evidence Chain (Innovation 6)"""
     print("\n⛓️  Test 7: Blockchain Evidence Chain")
     print("-" * 60)
@@ -316,7 +316,7 @@ def test_blockchain_evidence():
         return 'FAIL', str(e)
 
 
-def test_batch_processing():
+def verify_batch_processing():
     """Test 8: Batch Transaction Processing"""
     print("\n📦 Test 8: Batch Transaction Processing")
     print("-" * 60)
@@ -355,7 +355,7 @@ def test_batch_processing():
         return 'FAIL', str(e)
 
 
-def test_health_check():
+def verify_health_check():
     """Test 9: System Health Check"""
     print("\n💚 Test 9: System Health & Status")
     print("-" * 60)
@@ -388,7 +388,7 @@ def main():
     print(f"Test Time: {datetime.now().isoformat()}")
     print("="*80)
     
-    results = TestResults()
+    results = VerificationResults()
     
     # Wait for API to be ready
     print("\n🔄 Waiting for API to be ready...")
@@ -403,15 +403,15 @@ def main():
     
     # Run all tests
     tests = [
-        ("Core Fraud Detection", test_core_fraud_check),
-        ("Keystroke Stress Detection", test_keystroke_stress_detection),
-        ("Honeypot Virtual Escrow", test_honeypot_escrow),
-        ("Predictive Mule Identification", test_mule_identification),
-        ("Voice Stress Analysis", test_voice_stress_analysis),
-        ("Aegis-Oracle Explainer", test_aegis_oracle_explainer),
-        ("Blockchain Evidence Chain", test_blockchain_evidence),
-        ("Batch Processing", test_batch_processing),
-        ("System Health", test_health_check),
+        ("Core Fraud Detection", verify_core_fraud_check),
+        ("Keystroke Stress Detection", verify_keystroke_stress_detection),
+        ("Honeypot Virtual Escrow", verify_honeypot_escrow),
+        ("Predictive Mule Identification", verify_mule_identification),
+        ("Voice Stress Analysis", verify_voice_stress_analysis),
+        ("Aegis-Oracle Explainer", verify_aegis_oracle_explainer),
+        ("Blockchain Evidence Chain", verify_blockchain_evidence),
+        ("Batch Processing", verify_batch_processing),
+        ("System Health", verify_health_check),
     ]
     
     for test_name, test_func in tests:

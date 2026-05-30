@@ -89,3 +89,7 @@ Thumbs.db
 
 # Config overrides
 config/local_config.yaml
+
+# MLflow
+test_mlruns/
+mlruns/

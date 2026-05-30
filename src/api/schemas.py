@@ -3,9 +3,14 @@ Pydantic schemas for API request/response validation
 """
 # Schema validation for all fraud detection endpoints
 
-from pydantic import BaseModel, Field, field_validator, AliasChoices, ConfigDict
-from typing import Optional, List, Dict, Union
-from datetime import datetime
+from pydantic import BaseModel, Field, field_validator, model_validator, AliasChoices, ConfigDict
+from typing import Optional, List, Dict, Union, Any
+from src.api.validators import (
+    TransactionValidator,
+    ValidationError,
+    VALID_CURRENCY_CODES,
+    VALID_MODES,
+)
 
 
 class BiometricsData(BaseModel):
@@ -15,11 +20,14 @@ class BiometricsData(BaseModel):
     keystroke_events: Optional[List[Dict]] = Field(default=None, description="Raw keystroke events")
     mouse_movements: Optional[List[Dict]] = Field(default=None, description="Raw mouse movement events")
     
-    @field_validator('hold_times', 'flight_times') #ready
+    @field_validator('hold_times', 'flight_times')
     @classmethod
-    def validate_positive(cls, v):
-        if any(x < 0 for x in v):
-            raise ValueError("Times must be non-negative")
+    def validate_biometric_values(cls, v):
+        """Validate biometric array constraints."""
+        if len(v) > 1000:
+            raise ValueError("Biometric arrays cannot exceed 1000 elements")
+        if any(x < 0 or x > 10000 for x in v):
+            raise ValueError("Biometric values must be between 0 and 10000 milliseconds")
         return v
 
 
@@ -57,12 +65,88 @@ class TransactionCheckRequest(BaseModel):
     )
     amount: float = Field(gt=0, description="Transaction amount")
     currency: str = Field(default="INR", description="Currency code")
-    mode: str = Field(default="payment", description="Transaction mode (UPI, IMPS, NEFT, etc.)")
-    timestamp: Union[str, float] = Field(description="Transaction timestamp (ISO format or epoch seconds)")
+    mode: str = Field(default="UPI", description="Transaction mode (UPI, IMPS, NEFT, etc.)")
+    timestamp: Union[str, float] = Field(description="Transaction timestamp (ISO 8601 UTC format or epoch seconds)")
     device_id: Optional[str] = Field(default=None, description="Device identifier")
     biometrics: Optional[BiometricsData] = Field(default=None, description="Behavioral biometrics")
     ip_address: Optional[str] = Field(default=None, description="IP address")
     location: Optional[str] = Field(default=None, description="Transaction location")
+    
+    @field_validator('amount')
+    @classmethod
+    def validate_amount(cls, v):
+        """Validate transaction amount."""
+        try:
+            TransactionValidator.validate_amount(v)
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @field_validator('timestamp')
+    @classmethod
+    def validate_timestamp(cls, v):
+        """Validate and normalize timestamp to ISO 8601 UTC format.
+
+        Accepted inputs include Unix epoch seconds and timezone-aware ISO 8601
+        strings (Z or explicit UTC offsets).
+        """
+        try:
+            v = TransactionValidator.normalize_timestamp(v)
+            TransactionValidator.validate_timestamp(v)
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @field_validator('source_account')
+    @classmethod
+    def validate_source_account(cls, v):
+        """Validate source account format."""
+        try:
+            TransactionValidator.validate_account_id(v, "source_account")
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @field_validator('target_account')
+    @classmethod
+    def validate_target_account(cls, v):
+        """Validate target account format."""
+        try:
+            TransactionValidator.validate_account_id(v, "target_account")
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @field_validator('currency')
+    @classmethod
+    def validate_currency(cls, v):
+        """Validate currency code."""
+        try:
+            TransactionValidator.validate_currency_code(v)
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @field_validator('mode')
+    @classmethod
+    def validate_mode(cls, v):
+        """Validate transaction mode."""
+        try:
+            TransactionValidator.validate_mode(v)
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return v
+    
+    @model_validator(mode='after')
+    def validate_cross_fields(self):
+        """Validate cross-field constraints."""
+        try:
+            TransactionValidator.validate_cross_fields(
+                self.source_account, self.target_account
+            )
+        except ValidationError as e:
+            raise ValueError(e.suggestion) from e
+        return self
     
 
 
@@ -146,13 +230,15 @@ class BatchTransactionResponse(BaseModel):
 class HealthCheckResponse(BaseModel):
     """Health check response"""
     status: str = Field(description="Service status")
-    version: str = Field(default="2.0", description="API version")
-    model_loaded: bool = Field(description="Whether model is loaded")
-    graph_loaded: bool = Field(description="Whether transaction graph is loaded")
-    innovations_available: bool = Field(default=True, description="Whether innovations are available")
-    uptime_seconds: float = Field(default=0.0, description="Service uptime in seconds")
-    requests_processed: int = Field(description="Total requests processed")
-    timestamp: str = Field(description="Response timestamp")
+    service: str = Field(default="AegisGraph Sentinel", description="Service name")
+    version: Optional[str] = Field(default=None, description="API version")
+    model_loaded: Optional[bool] = Field(default=None, description="Whether model is loaded")
+    graph_loaded: Optional[bool] = Field(default=None, description="Whether transaction graph is loaded")
+    innovations_available: Optional[bool] = Field(default=None, description="Whether innovations are available")
+    uptime_seconds: Optional[float] = Field(default=None, description="Service uptime in seconds")
+    requests_processed: Optional[int] = Field(default=None, description="Total requests processed")
+    timestamp: Optional[str] = Field(default=None, description="Response timestamp")
+    services_health: Optional[Dict[str, Dict[str, Any]]] = Field(default=None, description="Detailed health stats for registered services")
 
 
 class ModelInfo(BaseModel):
@@ -192,7 +278,9 @@ class ErrorResponse(BaseModel):
 class VoiceAnalysisRequest(BaseModel):
     """Request for voice stress analysis"""
     transaction_id: str = Field(description="Transaction ID for correlation")
-    audio_base64: str = Field(description="Base64-encoded audio WAV file (max 30 seconds)")
+    # Keep this small so the API accepts only short voice clips and rejects
+    # large uploads before they can consume excessive memory or CPU.
+    audio_base64: str = Field(max_length=500_000, description="Base64-encoded audio WAV file (max 30 seconds)")
     sample_rate: int = Field(default=16000, description="Audio sample rate in Hz")
     
     @field_validator('sample_rate')
@@ -379,7 +467,6 @@ class LegalExportRequest(BaseModel):
     evidence_id: str
     case_number: str = Field(description="Legal case number")
     requesting_authority: str = Field(description="Law enforcement agency")
-    authorization_token: str = Field(description="Authorization token for access")
 
 
 class LegalExportResponse(BaseModel):
@@ -391,3 +478,43 @@ class LegalExportResponse(BaseModel):
     attestations: List[Dict] = Field(description="Validator attestations")
     export_timestamp: str
     authorized_by: str
+
+
+# ============================================================================
+# EXPLAINABILITY SCHEMAS (Aegis-Oracle)
+# ============================================================================
+
+class ExplainRequest(BaseModel):
+    """Request for AI-explainable decision explanation"""
+    transaction_id: str = Field(default="TXN_UNKNOWN", description="Transaction identifier")
+    source_account: Optional[str] = Field(default=None, description="Source account ID")
+    target_account: Optional[str] = Field(default=None, description="Target account ID")
+    amount: float = Field(default=0.0, description="Transaction amount")
+    currency: str = Field(default="INR", description="Currency code")
+    timestamp: Optional[str] = Field(default=None, description="Transaction timestamp")
+    behavioral_stress_detected: bool = Field(default=False, description="Whether behavioral stress was detected")
+    decision: str = Field(description="The decision made (ALLOW, REVIEW, BLOCK)")
+    risk_score: float = Field(description="The calculated risk score")
+    confidence: float = Field(default=0.85, description="Confidence in the decision")
+    breakdown: Optional[RiskBreakdown] = Field(default=None, description="Risk component breakdown")
+    innovations_triggered: List[str] = Field(default_factory=list, description="List of innovation modules triggered")
+
+
+class OracleExplainRequest(BaseModel):
+    """Detailed request for Aegis-Oracle forensic reasoning"""
+    transaction: Dict = Field(description="Transaction details")
+    risk_assessment: Dict = Field(description="Risk assessment results")
+    attention_weights: Optional[Dict] = Field(default=None, description="Model attention weights")
+    risk_breakdown: Optional[Dict] = Field(default=None, description="Detailed risk breakdown")
+    innovations_triggered: List[str] = Field(default_factory=list, description="Innovation modules triggered")
+
+
+class HoneypotDebugRequest(BaseModel):
+    """Request to manually activate a honeypot (Debug only)"""
+    transaction_id: str = Field(default="DEBUG", description="Transaction identifier")
+    source_account: str = Field(default="SRC", description="Source account ID")
+    target_account: str = Field(default="TGT", description="Target account ID")
+    amount: float = Field(default=0.0, description="Transaction amount")
+    currency: str = Field(default="INR", description="Currency code")
+    risk_score: float = Field(default=1.0, description="Risk score for the transaction")
+    fraud_indicators: List[str] = Field(default_factory=list, description="Identified fraud indicators")
