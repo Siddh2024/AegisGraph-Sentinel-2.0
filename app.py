@@ -26,6 +26,7 @@ import os
 import random
 import numpy as np
 import networkx as nx
+from src.inference.model_comparison import build_model_explanation_comparison
 
 # Lazy loading heavy visualization and graph modules implemented inline where possible
 # Page configuration
@@ -126,6 +127,82 @@ def _build_live_event(api_url: str, txn: dict) -> dict | None:
         }
     except Exception:
         return None
+
+
+def _render_model_explanation_comparison(transaction: dict, result: dict) -> None:
+    """Render a side-by-side model explanation dashboard for analysts."""
+    comparison = build_model_explanation_comparison(transaction, result)
+    model_rows = comparison["models"]
+    display_df = pd.DataFrame(
+        {
+            "Model": [row["model"] for row in model_rows],
+            "Risk Score": [row["risk_score"] for row in model_rows],
+            "Decision": [row["decision"] for row in model_rows],
+            "Confidence": [row["confidence"] for row in model_rows],
+            "Key Contributing Factors": [", ".join(row["key_factors"]) for row in model_rows],
+        }
+    )
+
+    st.markdown("---")
+    st.subheader("🧪 Multi-Model Fraud Explanation Comparison")
+
+    top_cols = st.columns(3)
+    with top_cols[0]:
+        st.metric("Models Compared", len(model_rows))
+    with top_cols[1]:
+        agreement = comparison["agreement"]
+        agreement_label = "Full Agreement" if agreement["all_models_agree"] else "Mixed Decisions"
+        st.metric("Decision Agreement", agreement_label)
+    with top_cols[2]:
+        confidence = comparison["confidence"]
+        st.metric("Confidence Spread", f"{confidence['spread']:.1%}")
+
+    st.dataframe(
+        display_df.style.background_gradient(cmap="RdYlGn_r", subset=["Risk Score"]),
+        use_container_width=True,
+        height=220,
+    )
+
+    chart_df = display_df.copy()
+    fig_compare = px.bar(
+        chart_df,
+        x="Model",
+        y="Risk Score",
+        color="Decision",
+        text="Decision",
+        color_discrete_map={"ALLOW": "#22c55e", "REVIEW": "#f59e0b", "BLOCK": "#ef4444"},
+        title="Model Risk Score and Decision Comparison",
+    )
+    fig_compare.update_layout(height=360, yaxis_range=[0, 1])
+    st.plotly_chart(fig_compare, use_container_width=True)
+
+    detail_cols = st.columns(3)
+    with detail_cols[0]:
+        st.markdown("**Common Factors**")
+        if comparison["common_factors"]:
+            for factor in comparison["common_factors"]:
+                st.write(f"- {factor}")
+        else:
+            st.write("No single factor appears in every model explanation.")
+    with detail_cols[1]:
+        st.markdown("**HTGNN-Specific Factors**")
+        if comparison["unique_htgnn_factors"]:
+            for factor in comparison["unique_htgnn_factors"]:
+                st.write(f"- {factor}")
+        else:
+            st.write("HTGNN shares its top factors with benchmark models.")
+    with detail_cols[2]:
+        st.markdown("**Agreement Analysis**")
+        st.write(comparison["agreement"]["summary"])
+        st.write(f"Risk score spread: {confidence['risk_score_spread']:.1%}")
+
+    with st.expander("🧠 Generated Model Explanations"):
+        for row in model_rows:
+            st.markdown(
+                f"**{row['model']}**: `{row['decision']}` at "
+                f"{row['risk_score']:.1%} risk, {row['confidence']:.1%} confidence. "
+                f"{row['explanation']}"
+            )
 
 
 def _advance_timed_state(
@@ -676,6 +753,8 @@ elif page == "💳 Transaction Scan":
                             st.success(result['explanation'])
                         
                         st.info(f"🚨 **Recommended Action:** {result['recommended_action']}")
+
+                        _render_model_explanation_comparison(transaction, result)
                         
                         # JSON Response
                         with st.expander("🧾 View Full JSON Response"):
