@@ -435,6 +435,7 @@ class RedisLedger:
 
     PREFIX = "aegis"
     MAX_EVIDENCE_INDEX_SIZE = 10000
+    BLOCK_METADATA_TTL = 86400
 
     def __init__(self, redis_url: str = None):
         self._client = None
@@ -506,10 +507,9 @@ class RedisLedger:
                 payload,
             )
             if 'block_number' in block:
-                self._client.set(
-                    f"{self.PREFIX}:block:{block['block_number']}",
-                    payload,
-                )
+                key = f"{self.PREFIX}:block:{block['block_number']}"
+                self._client.set(key, payload)
+                self._client.expire(key, self.BLOCK_METADATA_TTL)
         except Exception:
             self._mark_unavailable()
 
