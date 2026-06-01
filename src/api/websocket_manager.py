@@ -100,6 +100,12 @@ class WebSocketManager:
         await websocket.accept()
         
         async with self._lock:
+            old = self.active_connections.get(client_id)
+            if old is not None:
+                try:
+                    await old.websocket.close(code=1000, reason="Replaced by new connection")
+                except Exception:
+                    pass
             self.active_connections[client_id] = ConnectionState(websocket)
             logger.info(f"Client {client_id} connected via WebSocket")
             
