@@ -64,9 +64,20 @@ except ImportError as e:
         async def __call__(self, scope, receive, send):
             await self.app(scope, receive, send)
 
-    def get_remote_address(request):
-        client = getattr(request, "client", None)
-        return getattr(client, "host", "unknown")
+    def get_remote_address(request) -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        ips = [ip.strip() for ip in forwarded_for.split(",")]
+        if ips and ips[0]:
+            return ips[0]
+
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
+
+    client = getattr(request, "client", None)
+    return getattr(client, "host", "unknown")
+
 
     async def _rate_limit_exceeded_handler(request, exc):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
