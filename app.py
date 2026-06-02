@@ -41,12 +41,12 @@ st.set_page_config(
 
 # API Configuration
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-MAX_BATCH_UPLOAD_BYTES = 5 * 1024 * 1024
-BATCH_PREVIEW_ROWS = 10
-BATCH_CHUNK_SIZE = 50
-BATCH_MAX_ROWS = 500
+MAX_BATCH_UPLOAD_BYTES = int(os.getenv("MAX_BATCH_UPLOAD_BYTES", 5 * 1024 * 1024))
+BATCH_PREVIEW_ROWS = int(os.getenv("BATCH_PREVIEW_ROWS", 10))
+BATCH_CHUNK_SIZE = int(os.getenv("BATCH_CHUNK_SIZE", 50))
+BATCH_MAX_ROWS = int(os.getenv("BATCH_MAX_ROWS", 500))
 COMMAND_CENTER_REFRESH_KEY = "command_center_live_refresh"
-COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("COMMAND_CENTER_WORKERS", 2)))
 
 
 def _cache_data(ttl: int):
@@ -85,9 +85,12 @@ def _build_batch_transaction(row, index: int) -> dict:
         "amount": float(row.get("amount", 0)),
         "currency": str(row.get("currency", "INR")),
         "mode": str(row.get("mode", "UPI")),
+
         "timestamp": str(
             row.get("timestamp", datetime.now(timezone.utc).isoformat() + "Z")
         ),
+        "timestamp": str(row.get("timestamp", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))),
+
     }
 
 
@@ -645,7 +648,9 @@ if page == "🧭 Command Center":
                 "amount": float(random.choice([500, 2500, 50000, 150000, 300000])),
                 "currency": "INR",
                 "mode": random.choice(["UPI", "IMPS"]),
+
                 "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             }
             st.session_state.live_event_txn = txn
             st.session_state.live_event_future = COMMAND_CENTER_IO_EXECUTOR.submit(
