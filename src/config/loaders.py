@@ -70,14 +70,19 @@ def _load_yaml(path: Path, *, optional: bool = True) -> Dict[str, Any]:
     return data
 
 
-def load_environment(environ: Optional[Mapping[str, str]] = None) -> EnvironmentVariablesSchema:
+def load_environment(
+    environ: Optional[Mapping[str, str]] = None,
+) -> EnvironmentVariablesSchema:
     """Load recognized environment variables into a typed raw schema."""
-        load_dotenv()
-        load_dotenv()
-        source = os.environ
-    else:
-        source = environ
-        source = os.environ
+    load_dotenv()
+
+    source = os.environ if environ is None else environ
+
+    values = {
+        field_name: source.get(env_var)
+        for field_name, env_var in ENV_ALIASES.items()
+    }
+
     return EnvironmentVariablesSchema(**values)
 
 
