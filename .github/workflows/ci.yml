@@ -35,7 +35,7 @@ jobs:
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         # Ensure all required runtime and testing libraries are present
-        pip install fastapi uvicorn networkx numpy pyyaml python-dotenv httpx slowapi pytest pytest-asyncio pytest-cov pydantic flake8
+        pip install fastapi uvicorn networkx numpy pyyaml python-dotenv slowapi pytest pytest-asyncio pytest-cov pydantic flake8
 
     - name: Lint Codebase with Flake8 (Static Analysis)
       run: |
