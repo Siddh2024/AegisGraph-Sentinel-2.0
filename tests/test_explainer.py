@@ -8,6 +8,10 @@ import torch
 
 
 def _load_explainer_module():
+    loaded_module = sys.modules.get("src.inference.explainer")
+    if loaded_module is not None:
+        return loaded_module
+
     tg_module = types.ModuleType("torch_geometric")
     explain_module = types.ModuleType("torch_geometric.explain")
 
@@ -23,7 +27,6 @@ def _load_explainer_module():
 
     sys.modules["torch_geometric"] = tg_module
     sys.modules["torch_geometric.explain"] = explain_module
-    sys.modules.pop("src.inference.explainer", None)
     return importlib.import_module("src.inference.explainer")
 
 
