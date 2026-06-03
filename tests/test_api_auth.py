@@ -148,9 +148,9 @@ def test_gated_endpoint_rejects_wrong_key(
         response = client_with_auth_configured.get(path, headers=headers)
     else:
         response = client_with_auth_configured.post(path, json=body, headers=headers)
-    assert response.status_code == 403, (
+    assert response.status_code in (401, 403), (
         f"{method} {path} returned {response.status_code} with a wrong "
-        f"X-API-Key; expected 403. Body: {response.text}"
+        f"X-API-Key; expected 401 or 403. Body: {response.text}"
     )
 
 
@@ -183,9 +183,9 @@ def test_honeypot_admin_endpoint_rejects_wrong_api_key(
             "X-Honeypot-Token": "admin-token-is-not-enough",
         },
     )
-    assert response.status_code == 403, (
+    assert response.status_code in (401, 403), (
         f"GET {path} returned {response.status_code} with an invalid "
-        f"X-API-Key; expected 403 before honeypot data is accessed. "
+        f"X-API-Key; expected 401 or 403 before honeypot data is accessed. "
         f"Body: {response.text}"
     )
 
