@@ -82,13 +82,10 @@ def load_environment(
         source = environ
     mapped = {}
 
-    # First, copy any existing lowercase keys directly passed
-    # (e.g. from tests)
-    for k, v in source.items():
-        if k in EnvironmentVariablesSchema.model_fields:
-            mapped[k] = v
+    for key, value in source.items():
+        if key in EnvironmentVariablesSchema.model_fields:
+            mapped[key] = value
 
-    # Then overlay mapped uppercase environment keys
     for field_name, env_var in ENV_ALIASES.items():
         if env_var in source:
             mapped[field_name] = source[env_var]
