@@ -19,8 +19,12 @@ jobs:
             run_coverage: true
 
     steps:
-    - name: Checkout Repository Source
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+
+    # Coverage is enabled only for one matrix leg to keep CI time bounded.
+    - name: Set run_coverage flag
+      id: coverage_flag
+      run: echo "RUN_COVERAGE=true" >> $GITHUB_OUTPUT
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
