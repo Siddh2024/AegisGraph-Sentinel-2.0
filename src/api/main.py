@@ -631,6 +631,8 @@ _generate_explanation_impl = None
 
 
 def _resolve_model_components() -> tuple[Any, Any, bool]:
+    if not MODEL_AVAILABLE:
+        return _fallback_compute_risk_score, _fallback_generate_explanation, False
     try:
         from ..inference.risk_scorer import compute_risk_score as model_compute_risk_score
         from ..inference.explainer import generate_explanation as model_generate_explanation
@@ -668,6 +670,7 @@ def _is_module_available(module_name: str) -> bool:
 MODEL_AVAILABLE = (
     _is_module_available("src.inference.risk_scorer")
     and _is_module_available("src.inference.explainer")
+    and _is_module_available("torch_geometric")
 )
 
 INNOVATIONS_AVAILABLE = all(
