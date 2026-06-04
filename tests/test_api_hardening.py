@@ -267,21 +267,32 @@ def test_fallback_graph_analysis_does_not_swallow_keyboard_interrupt(monkeypatch
         api_main._fallback_compute_risk_score(_transaction())
 
 
-def test_lateral_movement_initializes_even_when_other_innovations_are_unavailable(monkeypatch):
-    dummy_detector = object()
+def test_lateral_movement_deferred_to_lazy_provider(monkeypatch):
+    """LateralMovementDetector is no longer constructed at startup.
+    _initialize_innovation_runtime() only registers the health monitor
+    slot. Actual construction is deferred to get_lateral_movement_detector()
+    in src/api/dependencies/subsystems.py on first request."""
     startup_logger = Mock()
-    register_service = Mock()
 
     monkeypatch.setattr(api_main, "INNOVATIONS_AVAILABLE", False)
     monkeypatch.setattr(api_main, "LATERAL_MOVEMENT_AVAILABLE", True)
-    monkeypatch.setattr(api_main, "LateralMovementDetector", lambda: dummy_detector)
-    monkeypatch.setattr(api_main.state.services, "register_service", register_service)
-    monkeypatch.setattr(api_main.state, "lateral_movement_detector", None, raising=False)
+
+    # Clear any previously constructed instance from shared state
+    with api_main.state.services._lock:
+        api_main.state.services._services.pop(
+            "lateral_movement_detector", None
+        )
 
     api_main._initialize_innovation_runtime(startup_logger)
 
-    assert api_main.state.lateral_movement_detector is dummy_detector
-    register_service.assert_called_once_with("lateral_movement_detector", dummy_detector, replace=True)
+    # Service slot must NOT be constructed at startup
+    assert api_main.state.services.optional_get(
+        "lateral_movement_detector"
+    ) is None
+
+    # Health monitor slot must be registered
+    snapshot = api_main.state.runtime.health_monitor.get_health_snapshot()
+    assert "lateral_movement_detector" in snapshot
 
 
 @pytest.mark.parametrize(
