@@ -277,6 +277,12 @@ def test_lateral_movement_deferred_to_lazy_provider(monkeypatch):
     monkeypatch.setattr(api_main, "INNOVATIONS_AVAILABLE", False)
     monkeypatch.setattr(api_main, "LATERAL_MOVEMENT_AVAILABLE", True)
 
+    # Clear any previously constructed instance from shared state
+    with api_main.state.services._lock:
+        api_main.state.services._services.pop(
+            "lateral_movement_detector", None
+        )
+
     api_main._initialize_innovation_runtime(startup_logger)
 
     # Service slot must NOT be constructed at startup
@@ -284,8 +290,7 @@ def test_lateral_movement_deferred_to_lazy_provider(monkeypatch):
         "lateral_movement_detector"
     ) is None
 
-    # Health monitor slot must be registered so health checks
-    # know the service exists
+    # Health monitor slot must be registered
     assert api_main.state.runtime.health_monitor.is_registered(
         "lateral_movement_detector"
     )
