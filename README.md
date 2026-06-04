@@ -93,7 +93,10 @@ Edit `.env` with your configuration:
 API_URL=http://localhost:8000
 
 # CORS Configuration (comma-separated origins)
-AEGIS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8501,http://127.0.0.1:8501
+CORS_ORIGINS=http://localhost:3000,http://localhost:8501,http://127.0.0.1:8501
+
+# Backward compatibility alias for CORS_ORIGINS
+# AEGIS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8501,http://127.0.0.1:8501
 
 # Debug Mode (set to 'true' to enable debug endpoints)
 DEBUG=false
@@ -113,7 +116,10 @@ CUDA_VISIBLE_DEVICES=0
 
 **Required Environment Variables:**
 - `API_URL`: Backend API URL for the Streamlit frontend
-- `AEGIS_ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
+- `CORS_ORIGINS`: Comma-separated list of allowed CORS origins
+
+**Backward Compatibility:**
+- `AEGIS_ALLOWED_ORIGINS`: Legacy alias for `CORS_ORIGINS` if you are updating an older deployment
 
 **Optional Environment Variables:**
 - `DEBUG`: Enable debug endpoints (default: false)
