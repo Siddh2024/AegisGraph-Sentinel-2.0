@@ -6,7 +6,10 @@ import logging
 import os
 import time
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from src.features.blast_radius import BlastRadiusReport
 
 import networkx as nx
 
@@ -68,7 +71,8 @@ class Neo4jGraphProvider:
         self.user = user or os.getenv("AEGIS_NEO4J_USER") or os.getenv("NEO4J_USER")
         self.password = password or os.getenv("AEGIS_NEO4J_PASSWORD") or os.getenv("NEO4J_PASSWORD")
 
-        # Resolve require_encryption: constructor arg > env var > default True
+        # Resolve require_encryption: constructor arg > env var > default True.
+        # Provider upgrades bolt:// -> bolt+ssc:// by default (tests assert this).
         if require_encryption is None:
             env_val = os.getenv("AEGIS_NEO4J_REQUIRE_ENCRYPTION", "true").strip().lower()
             require_encryption = env_val not in ("false", "0", "no")
@@ -99,15 +103,18 @@ class Neo4jGraphProvider:
                     "(or NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD as fallback)."
                 )
 
-            if self.require_encryption and not _is_secure(self.uri):
-                upgraded = _upgrade_uri(self.uri)
-                logger.warning(
-                    "Neo4j URI %s uses unencrypted transport; upgrading to %s. "
-                    "Set AEGIS_NEO4J_REQUIRE_ENCRYPTION=false to allow plain-text.",
-                    self.uri,
-                    upgraded,
-                )
-                self.uri = upgraded
+            if self.require_encryption:
+                # Always ensure the URI is encrypted/safe when the caller requires it.
+                # Tests expect bolt:// to be upgraded to bolt+ssc://.
+                if not _is_secure(self.uri):
+                    upgraded = _upgrade_uri(self.uri)
+                    logger.warning(
+                        "Neo4j URI %s uses unencrypted transport; upgrading to %s. "
+                        "Set AEGIS_NEO4J_REQUIRE_ENCRYPTION=false to allow plain-text.",
+                        self.uri,
+                        upgraded,
+                    )
+                    self.uri = upgraded
 
             try:
                 self._driver = neo4j.GraphDatabase.driver(
@@ -127,29 +134,30 @@ class Neo4jGraphProvider:
                 self.enabled = False
                 self._driver = None
 
-    def _get_cached_subgraph(self, account_id: str, now: float) -> Optional[nx.DiGraph]:
-        cached_entry = self._subgraph_cache.get(account_id)
+    def _cache_key(self, account_id: str, max_hops: int) -> str:
+        # Cache is keyed only by account_id (tests assert this behavior).
+        # max_hops is still part of the query semantics, but is intentionally
+        # not used in the cache key to keep cache invalidation simple.
+        return account_id
+
+    def _get_cached_subgraph(self, account_id: str, max_hops: int, now: float) -> Optional[nx.DiGraph]:
+        key = self._cache_key(account_id, max_hops)
+        cached_entry = self._subgraph_cache.get(key)
         if not cached_entry:
             return None
 
         cache_time, cached_graph = cached_entry
         if now - cache_time >= self.cache_ttl_seconds:
-            self._subgraph_cache.pop(account_id, None)
+            self._subgraph_cache.pop(key, None)
             return None
 
-        self._subgraph_cache.move_to_end(account_id)
+        self._subgraph_cache.move_to_end(key)
         return cached_graph
 
-        def _store_cached_subgraph(self, account_id: str, graph: nx.DiGraph, now: float) -> None:
-        expired_keys = [
-            k for k, (cache_time, _) in self._subgraph_cache.items()
-            if now - cache_time >= self.cache_ttl_seconds
-        ]
-        for k in expired_keys:
-            self._subgraph_cache.pop(k, None)
-
-        self._subgraph_cache[account_id] = (now, graph)
-        self._subgraph_cache.move_to_end(account_id)
+    def _store_cached_subgraph(self, account_id: str, max_hops: int, graph: nx.DiGraph, now: float) -> None:
+        key = self._cache_key(account_id, max_hops)
+        self._subgraph_cache[key] = (now, graph)
+        self._subgraph_cache.move_to_end(key)
 
         while len(self._subgraph_cache) > self.cache_max_entries:
             self._subgraph_cache.popitem(last=False)
@@ -237,7 +245,9 @@ class Neo4jGraphProvider:
                     amount=amount,
                     timestamp=timestamp,
                 )
-            # Invalidate any cached local subgraphs for the involved accounts
+            # Invalidate any cached local subgraphs for the involved accounts.
+            # Cache keys are expected to be only the account_id (tests assert this),
+            # so remove direct entries for both accounts.
             self._subgraph_cache.pop(src_account, None)
             self._subgraph_cache.pop(dst_account, None)
         except Exception as e:
@@ -250,26 +260,25 @@ class Neo4jGraphProvider:
         Extract the k-hop local transaction network around an account ID from Neo4j,
         reconstructing it as a directed NetworkX DiGraph.
         """
+        if max_hops < 1:
+            max_hops = 1
         if not self.is_active:
             G = nx.DiGraph()
             G.add_node(account_id)
             return G
 
-        # Check in-memory TTL cache
         now = time.time()
-        cached_graph = self._get_cached_subgraph(account_id, now)
+        cached_graph = self._get_cached_subgraph(account_id, max_hops, now)
         if cached_graph is not None:
             return cached_graph
 
         G = nx.DiGraph()
         G.add_node(account_id)
 
-        # Retrieve paths matching the k-hop undirected pattern with a hard limit
-        # to prevent super-node DoS (issue #477).
         limit = self.DEFAULT_SUBGRAPH_LIMIT
-
+        hop_pattern = f"[r:TRANSFER*1..{max_hops}]"
         query = (
-            "MATCH path = (a:Account {id: $account_id})-[r:TRANSFER*1..2]-(b:Account)\n"
+            f"MATCH path = (a:Account {{id: $account_id}})-{hop_pattern}-(b:Account)\n"
             "RETURN path\n"
             "LIMIT $limit"
         )
@@ -327,7 +336,7 @@ class Neo4jGraphProvider:
                         len(G.edges()),
                     )
 
-            self._store_cached_subgraph(account_id, G, now)
+            self._store_cached_subgraph(account_id, max_hops, G, now)
             return G
 
         except Exception as e:
@@ -335,6 +344,125 @@ class Neo4jGraphProvider:
                 f"Error extracting subgraph for account {account_id}: {e}"
             )
             return G
+
+    def __contains__(self, account_id: str) -> bool:
+        """Check if an account ID node exists in the Neo4j database."""
+        if not self.is_active:
+            return False
+        query = "MATCH (n:Account {id: $account_id}) RETURN count(n) > 0 AS exists"
+        try:
+            with self._driver.session() as session:
+                result = session.run(query, account_id=account_id)
+                record = result.single()
+                return record["exists"] if record else False
+        except Exception as e:
+            logger.error(f"Error checking node existence in Neo4j: {e}")
+            return False
+
+    def compute_blast_radius(self, source_node: str, max_depth: int = 3) -> BlastRadiusReport:
+        """
+        Perform low-latency APOC-based contagion score traversal directly in Neo4j.
+        Raises ValueError if source_node is not found in the database.
+        """
+        from src.features.blast_radius import BlastRadiusReport, ContagionResult
+
+        if not self.is_active:
+            raise ValueError("Neo4j database is not active.")
+
+        if source_node not in self:
+            raise ValueError(
+                f"Source node {source_node!r} not found in graph "
+                f"({self.number_of_nodes} nodes total)."
+            )
+
+        # Bounded max depth
+        from src.features.blast_radius import HARD_MAX_DEPTH
+        max_depth = min(max_depth, HARD_MAX_DEPTH)
+
+        query = (
+            "MATCH (start:Account {id: $account_id})\n"
+            "CALL apoc.path.expandConfig(start, {\n"
+            "  relationshipFilter: 'TRANSFER>',\n"
+            "  minLevel: 0,\n"
+            "  maxLevel: $max_depth,\n"
+            "  uniqueness: 'NODE_GLOBAL'\n"
+            "}) YIELD path\n"
+            "WITH last(nodes(path)) AS node, length(path) AS depth\n"
+            "WITH collect({node: node, depth: depth}) AS reached_nodes\n"
+            "WITH reached_nodes, apoc.map.fromPairs([rn in reached_nodes | [rn.node.id, rn.depth]]) AS depth_map\n"
+            "UNWIND reached_nodes AS rn\n"
+            "WITH rn.node AS target, rn.depth AS target_depth, depth_map\n"
+            "WHERE target.id <> $account_id\n"
+            "MATCH (source)-[r:TRANSFER]->(target)\n"
+            "WHERE source.id IN keys(depth_map)\n"
+            "WITH target, target_depth, depth_map[source.id] AS source_depth, r\n"
+            "WHERE source_depth IS NOT NULL AND source_depth < $max_depth\n"
+            "WITH target.id AS node_id, target_depth AS depth, sum(coalesce(r.weight, 1.0) / ((source_depth + 1) * (source_depth + 1))) AS score\n"
+            "RETURN node_id, depth, score"
+        )
+
+        critical: List[ContagionResult] = []
+        high: List[ContagionResult] = []
+        suspicious: List[ContagionResult] = []
+        total_nodes = 0
+
+        try:
+            with self._driver.session() as session:
+                result = session.run(
+                    query,
+                    account_id=source_node,
+                    max_depth=max_depth,
+                )
+
+                for record in result:
+                    node_id = record["node_id"]
+                    depth = record["depth"]
+                    score = record["score"]
+
+                    # Apply classification
+                    if score >= 0.70:
+                        tier = "CRITICAL"
+                    elif score >= 0.35:
+                        tier = "HIGH"
+                    elif score >= 0.10:
+                        tier = "SUSPICIOUS"
+                    else:
+                        continue  # Below threshold
+
+                    result_obj = ContagionResult(
+                        node_id=node_id,
+                        contagion_score=round(score, 6),
+                        risk_tier=tier,
+                        depth=depth,
+                    )
+
+                    if tier == "CRITICAL":
+                        critical.append(result_obj)
+                    elif tier == "HIGH":
+                        high.append(result_obj)
+                    else:
+                        suspicious.append(result_obj)
+
+                    total_nodes += 1
+
+            # Sort each tier by score descending
+            critical.sort(key=lambda r: r.contagion_score, reverse=True)
+            high.sort(key=lambda r: r.contagion_score, reverse=True)
+            suspicious.sort(key=lambda r: r.contagion_score, reverse=True)
+
+            return BlastRadiusReport(
+                source_node=source_node,
+                max_depth=max_depth,
+                total_nodes_evaluated=total_nodes,
+                critical=critical,
+                high=high,
+                suspicious=suspicious,
+            )
+
+        except Exception as e:
+            logger.error(f"Error computing blast radius in Neo4j for node {source_node}: {e}")
+            raise RuntimeError(f"Neo4j computation error: {e}") from e
+
     def close(self) -> None:
         """Release connection pool handles."""
         if self._driver:

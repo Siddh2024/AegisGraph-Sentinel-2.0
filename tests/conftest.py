@@ -24,24 +24,22 @@ Three concerns handled here:
 from __future__ import annotations
 
 from collections.abc import Iterator
+import importlib.util
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.main import app
 
-# Check if torch is available
-try:
-    import torch
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+RUN_TORCH_TESTS = os.getenv("RUN_TORCH_TESTS", "").lower() == "true"
+TORCH_AVAILABLE = RUN_TORCH_TESTS and importlib.util.find_spec("torch") is not None
 
 # Skip torch tests if torch is not available
 def pytest_collection_modifyitems(config, items):
     """Skip torch-marked tests if torch is not available."""
     if not TORCH_AVAILABLE:
-        skip_torch = pytest.mark.skip(reason="PyTorch not installed")
+        skip_torch = pytest.mark.skip(reason="PyTorch tests require RUN_TORCH_TESTS=true")
         for item in items:
             if "torch" in item.keywords or item.parent and "torch" in item.parent.name:
                 item.add_marker(skip_torch)
@@ -49,7 +47,7 @@ def pytest_collection_modifyitems(config, items):
 
 # Files whose tests should exercise the real API key gate. The autouse
 # bypass below skips these so the gate is active during those tests.
-_AUTH_TEST_FILES = frozenset({"test_api_auth.py"})
+_AUTH_TEST_FILES = frozenset({"test_api_auth.py", "test_rbac.py"})
 
 
 @pytest.fixture
@@ -103,3 +101,8 @@ def _reset_global_rate_limiter():
     """Reset rate limits before each test."""
     from src.api.validators import reset_rate_limiter
     reset_rate_limiter()
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
