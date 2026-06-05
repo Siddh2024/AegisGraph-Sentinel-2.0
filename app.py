@@ -135,40 +135,89 @@ def _schedule_live_refresh(interval_ms: int = 1500) -> None:
         st_autorefresh(interval=interval_ms, key=COMMAND_CENTER_REFRESH_KEY)
 
 
+def _safe_api_get(url: str, timeout: int = 5) -> dict:
+    """GET *url* and return the parsed JSON body on success.
+
+    Returns an empty dict on any network failure or non-2xx response and
+    logs the error so it appears in centralized log aggregators.  A
+    Streamlit warning banner is shown when the backend is unreachable so
+    operators can distinguish "no data" from "API offline".
+    """
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        logger.warning("API unreachable (ConnectionError): %s", url)
+        st.warning("⚠️ Cannot reach the API server — verify it is running (`python -m uvicorn src.api.main:app --reload`).")
+        return {}
+    except requests.exceptions.Timeout:
+        logger.warning("API request timed out: %s", url)
+        st.warning("⚠️ API server did not respond in time. It may be overloaded.")
+        return {}
+    except requests.exceptions.HTTPError as exc:
+        logger.warning("API returned HTTP %s: %s", exc.response.status_code, url)
+        return {}
+    except Exception as exc:
+        logger.error("Unexpected error fetching %s: %s", url, exc)
+        return {}
+
+
+def _safe_api_post(url: str, payload: dict, timeout: int = 5) -> dict | None:
+    """POST *payload* to *url* and return the parsed JSON body on success.
+
+    Returns ``None`` on any network failure or non-2xx response and logs
+    the error.  Unlike ``_safe_api_get``, this helper does **not** show a
+    Streamlit banner because POST calls are typically made from background
+    threads where ``st.*`` calls are not safe.
+    """
+    try:
+        response = requests.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        logger.warning("API unreachable (ConnectionError) for POST: %s", url)
+        return None
+    except requests.exceptions.Timeout:
+        logger.warning("API POST timed out: %s", url)
+        return None
+    except requests.exceptions.HTTPError as exc:
+        logger.warning("API POST returned HTTP %s: %s", exc.response.status_code, url)
+        return None
+    except Exception as exc:
+        logger.error("Unexpected error posting to %s: %s", url, exc)
+        return None
+
+
 @_cache_data(ttl=20)
 def _fetch_health_snapshot(api_url: str) -> dict:
-    response = requests.get(f"{api_url}/health", timeout=2)
-    return response.json() if response.status_code == 200 else {}
+    """Return the API /health payload, or an empty dict if unreachable."""
+    return _safe_api_get(f"{api_url}/health", timeout=2)
 
 
 @_cache_data(ttl=5)
 def _fetch_stats_snapshot(api_url: str) -> dict:
-    response = requests.get(f"{api_url}/stats", timeout=5)
-    return response.json() if response.status_code == 200 else {}
+    """Return the API /stats payload, or an empty dict if unreachable."""
+    return _safe_api_get(f"{api_url}/stats", timeout=5)
 
 
 def _build_live_event(api_url: str, txn: dict) -> dict | None:
     """Execute one live fraud check off the UI thread and shape the dashboard payload."""
-    try:
-        start_t = time.time()
-        resp = requests.post(f"{api_url}/api/v1/fraud/check", json=txn, timeout=2)
-        latency = int((time.time() - start_t) * 1000)
-        if resp.status_code != 200:
-            return None
-
-        result = resp.json()
-        return {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "id": txn["transaction_id"],
-            "amount": txn["amount"],
-            "decision": result.get("decision", "ALLOW"),
-            "risk": result.get("risk_score", 0.0),
-            "latency": latency,
-            "explanation": result.get("explanation", ""),
-            "breakdown": result.get("breakdown", {}),
-        }
-    except Exception:
+    start_t = time.time()
+    result = _safe_api_post(f"{api_url}/api/v1/fraud/check", txn, timeout=2)
+    if result is None:
         return None
+    latency = int((time.time() - start_t) * 1000)
+    return {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "id": txn["transaction_id"],
+        "amount": txn["amount"],
+        "decision": result.get("decision", "ALLOW"),
+        "risk": result.get("risk_score", 0.0),
+        "latency": latency,
+        "explanation": result.get("explanation", ""),
+        "breakdown": result.get("breakdown", {}),
+    }
 
 
 def _render_model_explanation_comparison(transaction: dict, result: dict) -> None:
@@ -637,14 +686,8 @@ if page == "🧭 Command Center":
     if "live_event_txn" not in st.session_state:
         st.session_state.live_event_txn = None
 
-    try:
-        health = _fetch_health_snapshot(API_URL)
-    except Exception:
-        health = {}
-    try:
-        stats = _fetch_stats_snapshot(API_URL)
-    except Exception:
-        stats = {}
+    health = _fetch_health_snapshot(API_URL)
+    stats = _fetch_stats_snapshot(API_URL)
 
     # Generate a live event if active
     if live_mode:
