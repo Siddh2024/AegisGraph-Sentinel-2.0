@@ -87,22 +87,18 @@ def load_environment(
     environ: Optional[Mapping[str, str]] = None,
 ) -> EnvironmentVariablesSchema:
     """Load recognized environment variables into a typed raw schema."""
+def load_environment(
+    environ: Optional[Mapping[str, str]] = None,
+) -> EnvironmentVariablesSchema:
+    """Load recognized environment variables into a typed raw schema."""
+    load_dotenv()
     if environ is None:
-        load_dotenv()
         source = os.environ
     else:
         source = environ
-    mapped = {}
-
-    for key, value in source.items():
-        if key in EnvironmentVariablesSchema.model_fields:
-            mapped[key] = value
-
-    for field_name, env_var in ENV_ALIASES.items():
-        if env_var in source:
-            mapped[field_name] = source[env_var]
-
-    return EnvironmentVariablesSchema(**mapped)
+    
+    values = {key: source.get(key) for key in EnvironmentVariablesSchema.__annotations__}
+    return EnvironmentVariablesSchema(**values)
 
 
 def load_runtime_yaml(config_path: Optional[str | Path] = None) -> Dict[str, Any]:
