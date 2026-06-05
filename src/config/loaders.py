@@ -97,8 +97,17 @@ def load_environment(
     else:
         source = environ
     
-    values = {key: source.get(key) for key in EnvironmentVariablesSchema.__annotations__}
-    return EnvironmentVariablesSchema(**values)
+    mapped = {}
+
+    for key, value in source.items():
+        if key in EnvironmentVariablesSchema.model_fields:
+            mapped[key] = value
+
+    for field_name, env_var in ENV_ALIASES.items():
+        if env_var in source:
+            mapped[field_name] = source[env_var]
+
+    return EnvironmentVariablesSchema(**mapped)
 
 
 def load_runtime_yaml(config_path: Optional[str | Path] = None) -> Dict[str, Any]:
