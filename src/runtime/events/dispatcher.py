@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from typing import Optional
+from typing import Any, Optional
 
 from .event_bus import RuntimeEventBus
 from .event_types import RuntimeEvent, RuntimeShutdownEvent
@@ -26,10 +26,16 @@ class EventDispatcher:
       does not lose events.
     """
 
-    def __init__(self, bus: RuntimeEventBus, maxsize: int = 256) -> None:
+    def __init__(
+        self,
+        bus: RuntimeEventBus,
+        maxsize: int = 256,
+        resource_manager: Optional[Any] = None,
+    ) -> None:
         self._bus = bus
         self._maxsize = maxsize
         self._queue: asyncio.Queue[RuntimeEvent] = asyncio.Queue(maxsize=maxsize)
+        self._resource_manager = resource_manager
         # Non-critical events are dropped on overflow; only critical events are preserved.
         self._overflow: deque[RuntimeEvent] = deque()
 
@@ -58,8 +64,17 @@ class EventDispatcher:
         """Enqueue *event* for delivery. Thread-safe, non-blocking."""
         if not self._started:
             return
+        self._sync_queue_budget()
+        if self._resource_manager is not None and not isinstance(event, _CRITICAL_EVENT_TYPES):
+            if not self._resource_manager.can_accept_event():
+                logger.warning(
+                    "Runtime event dropped due to backpressure throttling: %s",
+                    type(event).__name__,
+                )
+                return
         try:
             self._queue.put_nowait(event)
+            self._sync_queue_budget()
         except asyncio.QueueFull:
             if isinstance(event, _CRITICAL_EVENT_TYPES):
                 # Preserve critical events until shutdown processing can drain them.
@@ -112,6 +127,7 @@ class EventDispatcher:
             except Exception:
                 logger.exception("Event dispatch failed for %s", type(event).__name__)
             self._drain_overflow()
+            self._sync_queue_budget()
 
     async def _fetch_next_event(self) -> Optional[RuntimeEvent]:
         # Avoid cross-event-loop Queue bound errors by using get_nowait
@@ -134,6 +150,11 @@ class EventDispatcher:
             except asyncio.QueueFull:
                 self._overflow.appendleft(event)
                 break
+        self._sync_queue_budget()
+
+    def _sync_queue_budget(self) -> None:
+        if self._resource_manager is not None:
+            self._resource_manager.update_queue_size(self._queue.qsize(), self._maxsize)
 
     def __repr__(self) -> str:
         return (

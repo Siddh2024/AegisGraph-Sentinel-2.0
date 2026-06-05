@@ -326,10 +326,10 @@ def _chunked(items, chunk_size):
 def _fallback_compute_risk_score(transaction: dict, biometrics: dict = None, **kwargs) -> dict:
     """Enhanced risk scorer with graph-based mule account detection."""
     runtime_state = state
-    graph_loaded = getattr(runtime_state, "graph_loaded", False)
-    transaction_graph = getattr(runtime_state, "transaction_graph", None)
-    mule_accounts = getattr(runtime_state, "mule_accounts", set()) or set()
-    account_profiles = getattr(runtime_state, "account_profiles", {}) or {}
+    graph_loaded = kwargs.get("graph_loaded", getattr(runtime_state, "graph_loaded", False))
+    transaction_graph = kwargs.get("transaction_graph", getattr(runtime_state, "transaction_graph", None))
+    mule_accounts = kwargs.get("mule_accounts", getattr(runtime_state, "mule_accounts", set())) or set()
+    account_profiles = kwargs.get("account_profiles", getattr(runtime_state, "account_profiles", {})) or {}
 
     risk_score = 0.0
     breakdown = {
@@ -345,7 +345,7 @@ def _fallback_compute_risk_score(transaction: dict, biometrics: dict = None, **k
 
     graph_risk = 0.0
 
-    if graph_loaded and transaction_graph:
+    if graph_loaded and transaction_graph is not None:
         if source_account in mule_accounts:
             graph_risk += 0.6
             _api_logger.warning(
@@ -657,6 +657,12 @@ def _resolve_model_components() -> tuple[Any, Any, bool]:
 
 def compute_risk_score(*args, **kwargs):
     global _compute_risk_score_impl, _generate_explanation_impl
+    if (
+        "transaction_graph" not in kwargs
+        and getattr(state, "graph_loaded", False)
+        and getattr(state, "transaction_graph", None) is not None
+    ):
+        return _fallback_compute_risk_score(*args, **kwargs)
     if _compute_risk_score_impl is None:
         _compute_risk_score_impl, _generate_explanation_impl, _ = _resolve_model_components()
     return _compute_risk_score_impl(*args, **kwargs)
@@ -679,6 +685,9 @@ def _is_module_available(module_name: str) -> bool:
 MODEL_AVAILABLE = (
     _is_module_available("src.inference.risk_scorer")
     and _is_module_available("src.inference.explainer")
+    and _is_module_available("src.features.velocity_calculator")
+    and _is_module_available("src.features.behavioral_biometrics")
+    and _is_module_available("src.features.entropy_calculator")
     and _is_module_available("torch_geometric")
 )
 
@@ -1228,7 +1237,10 @@ async def lifespan(app: FastAPI):
     app.state.runtime = state.runtime
 
     # Set up recovery manager and watchdog
-    recovery_manager = RecoveryManager(state.runtime.health_monitor)
+    recovery_manager = RecoveryManager(
+        state.runtime.health_monitor,
+        resource_manager=state.runtime.resource_manager,
+    )
     watchdog = RuntimeWatchdog(
         health_monitor=state.runtime.health_monitor,
         task_registry=state.tasks,
