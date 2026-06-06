@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import sys
 from enum import Enum
 from typing import Annotated, List, Optional
 
@@ -143,33 +142,20 @@ def require_api_key(
 def require_role(*allowed_roles: Role):
     """FastAPI dependency factory that gates a route based on RBAC roles and inheritance.
 
+    Authentication is always enforced via constant-time HMAC comparison of the
+    SHA-256 hash of the provided ``X-API-Key`` header against the configured
+    hashes.  There is no bypass path — test suites must supply a real key or
+    configure ``dependency_overrides`` at the ``TestClient`` level, which is the
+    correct FastAPI pattern and has no effect on this function.
+
     Raises:
         HTTPException 503: No API keys configured.
         HTTPException 401: Missing or invalid API key.
-        HTTPException 403: Insufficient permissions.
+        HTTPException 403: Insufficient permissions for the requested role.
     """
     def dependency(
         x_api_key: Annotated[Optional[str], Header(alias="X-API-Key")] = None,
     ) -> Role:
-        # Check if require_api_key is bypassed in any loaded main module version in sys.modules
-        is_bypassed = False
-        debug_info = []
-        for mod_name, module in list(sys.modules.items()):
-            if mod_name.endswith("api.main") or mod_name == "api.main" or mod_name == "main" or "api" in mod_name or "main" in mod_name:
-                app_obj = getattr(module, "app", None)
-                if app_obj is not None:
-                    overrides = [getattr(k, "__name__", str(k)) for k in app_obj.dependency_overrides]
-                    debug_info.append(f"{mod_name}: {overrides}")
-                    if any(getattr(k, "__name__", None) == "require_api_key" for k in app_obj.dependency_overrides):
-                        is_bypassed = True
-
-        if not is_bypassed:
-            # Print debug info to stderr if not bypassed
-            print(f"DEBUG_BYPASS_FAILED: sys.modules search info: {debug_info}", file=sys.stderr)
-
-        if is_bypassed:
-            return Role.SUPER_ADMIN
-
         if not _is_configured():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -189,12 +175,10 @@ def require_role(*allowed_roles: Role):
                 detail="Invalid API key",
             )
 
-        has_access = False
-        for allowed in allowed_roles:
-            if allowed in ROLE_INHERITANCE.get(role, set()):
-                has_access = True
-                break
-
+        has_access = any(
+            allowed in ROLE_INHERITANCE.get(role, set())
+            for allowed in allowed_roles
+        )
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
