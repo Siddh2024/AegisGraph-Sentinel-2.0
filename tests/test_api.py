@@ -32,6 +32,16 @@ _TEST_API_KEY_HASH = hashlib.sha256(_TEST_API_KEY.encode("utf-8")).hexdigest()
 def _enable_real_api_key_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AEGIS_API_KEY_HASHES", _TEST_API_KEY_HASH)
     app.dependency_overrides.pop(require_api_key, None)
+    # Also remove any require_role() bypasses installed by the conftest fixture
+    # so that RBAC-gated endpoints perform real authentication in these tests.
+    from fastapi.routing import APIRoute
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for dep in route.dependencies:
+            fn = getattr(dep, "dependency", None)
+            if fn and getattr(fn, "__qualname__", "").startswith("require_role.<locals>.dependency"):
+                app.dependency_overrides.pop(fn, None)
 
 
 def _clear_rate_limit_storage():

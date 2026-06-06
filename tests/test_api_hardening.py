@@ -34,6 +34,16 @@ def _transaction(transaction_id="txn_001", amount=100.0):
 def _enable_real_api_key_gate(monkeypatch):
     monkeypatch.setenv("AEGIS_API_KEY_HASHES", hashlib.sha256(b"hardening-test-key").hexdigest())
     api_main.app.dependency_overrides.pop(require_api_key, None)
+    # Also remove any require_role() bypasses installed by the conftest fixture
+    # so that RBAC-gated endpoints perform real authentication in these tests.
+    from fastapi.routing import APIRoute
+    for route in api_main.app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for dep in route.dependencies:
+            fn = getattr(dep, "dependency", None)
+            if fn and getattr(fn, "__qualname__", "").startswith("require_role.<locals>.dependency"):
+                api_main.app.dependency_overrides.pop(fn, None)
 
 
 def _load_fresh_api_main(monkeypatch, *, environment: str, debug: str):
