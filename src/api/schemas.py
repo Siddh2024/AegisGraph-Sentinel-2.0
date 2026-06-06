@@ -71,17 +71,6 @@ class TransactionCheckRequest(BaseModel):
     biometrics: Optional[BiometricsData] = Field(default=None, description="Behavioral biometrics")
     ip_address: Optional[str] = Field(default=None, description="IP address")
     location: Optional[str] = Field(default=None, description="Transaction location")
-    
-    @field_validator('amount')
-    @classmethod
-    def validate_amount(cls, v):
-        """Validate transaction amount."""
-        try:
-            TransactionValidator.validate_amount(v)
-        except ValidationError as e:
-            raise ValueError(e.suggestion) from e
-        return v
-    
     @field_validator('timestamp')
     @classmethod
     def validate_timestamp(cls, v):
@@ -204,6 +193,15 @@ class TransactionCheckResponse(BaseModel):
     blockchain_evidence_id: Optional[str] = Field(default=None, description="Blockchain evidence ID (Innovation 6)")
     behavioral_stress_detected: bool = Field(default=False, description="Keystroke stress detected (Innovation 1)")
     lateral_movement_detected: bool = Field(default=False, description="Lateral movement pattern detected (MITRE ATT&CK TA0008)")
+    model_degraded: bool = Field(
+        default=False,
+        description=(
+            "True when the ML model was unavailable and the response was produced "
+            "by the amount-based fallback heuristic instead of the GNN pipeline. "
+            "Downstream consumers should treat degraded-mode decisions with lower "
+            "confidence and flag them in audit trails accordingly."
+        ),
+    )
     
 
 
@@ -694,3 +692,18 @@ class BlastRadiusResponse(BaseModel):
     )
     processing_time_ms: float = Field(description="Wall-clock time taken to compute the blast radius.")
     timestamp: str = Field(description="ISO-8601 UTC timestamp of the response.")
+
+# ============================================================================
+# ALERT SUMMARIES (AI-Powered)
+# ============================================================================
+
+class AlertSummaryRequest(BaseModel):
+    """Request schema for summarizing an anomaly alert"""
+    alert_data: Dict[str, Any] = Field(description="The complex JSON data of the anomaly alert")
+
+
+class AlertSummaryResponse(BaseModel):
+    """Response schema for the AI-generated alert summary"""
+    summary: str = Field(description="A plain English, 2-sentence explanation of the alert")
+    processing_time_ms: float = Field(description="Time taken to generate the summary in ms")
+

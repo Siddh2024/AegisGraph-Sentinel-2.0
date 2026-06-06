@@ -30,6 +30,10 @@ import numpy as np
 import networkx as nx
 from src.inference.model_comparison import build_model_explanation_comparison
 
+def _get_timestamp() -> str:
+    """Return a strict ISO 8601 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) for the API."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # Lazy loading heavy visualization and graph modules implemented inline where possible
 # Page configuration
 st.set_page_config(
@@ -45,6 +49,24 @@ MAX_BATCH_UPLOAD_BYTES = int(os.getenv("MAX_BATCH_UPLOAD_BYTES", 5 * 1024 * 1024
 BATCH_PREVIEW_ROWS = int(os.getenv("BATCH_PREVIEW_ROWS", 10))
 BATCH_CHUNK_SIZE = int(os.getenv("BATCH_CHUNK_SIZE", 50))
 BATCH_MAX_ROWS = int(os.getenv("BATCH_MAX_ROWS", 500))
+
+def display_decision_badge(decision: str):
+    """
+    Display a color-coded status badge for the given decision.
+    """
+    # Normalize to uppercase for comparison to support legacy labels if any
+    status = str(decision).upper()
+    
+    if status in ["SAFE", "ALLOW", "APPROVE"]:
+        st.success(f"✅ {status}")
+    elif status == "REVIEW":
+        st.warning(f"⚠️ {status}")
+    elif status == "BLOCK":
+        st.error(f"🛑 {status}")
+    else:
+        # Fallback for unexpected status
+        st.info(f"ℹ️ {status}")
+REQUIRED_CSV_COLUMNS = {"transaction_id", "source_account", "target_account", "amount"}
 COMMAND_CENTER_REFRESH_KEY = "command_center_live_refresh"
 COMMAND_CENTER_IO_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("COMMAND_CENTER_WORKERS", 2)))
 
@@ -76,6 +98,12 @@ def _json_for_inline_script(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _validate_csv_columns(df: pd.DataFrame) -> list:
+    """Return a list of required columns missing from the uploaded CSV."""
+    uploaded_cols = {col.strip().lower() for col in df.columns}
+    return [col for col in REQUIRED_CSV_COLUMNS if col not in uploaded_cols]
+
+
 def _build_batch_transaction(row, index: int) -> dict:
     """Normalize one CSV row into the fraud-check request payload."""
     return {
@@ -85,12 +113,7 @@ def _build_batch_transaction(row, index: int) -> dict:
         "amount": float(row.get("amount", 0)),
         "currency": str(row.get("currency", "INR")),
         "mode": str(row.get("mode", "UPI")),
-
-        "timestamp": str(
-            row.get("timestamp", datetime.now(timezone.utc).isoformat() + "Z")
-        ),
-        "timestamp": str(row.get("timestamp", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))),
-
+        "timestamp": str(row.get("timestamp", _get_timestamp())),
     }
 
 
@@ -112,40 +135,89 @@ def _schedule_live_refresh(interval_ms: int = 1500) -> None:
         st_autorefresh(interval=interval_ms, key=COMMAND_CENTER_REFRESH_KEY)
 
 
+def _safe_api_get(url: str, timeout: int = 5) -> dict:
+    """GET *url* and return the parsed JSON body on success.
+
+    Returns an empty dict on any network failure or non-2xx response and
+    logs the error so it appears in centralized log aggregators.  A
+    Streamlit warning banner is shown when the backend is unreachable so
+    operators can distinguish "no data" from "API offline".
+    """
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        logger.warning("API unreachable (ConnectionError): %s", url)
+        st.warning("⚠️ Cannot reach the API server — verify it is running (`python -m uvicorn src.api.main:app --reload`).")
+        return {}
+    except requests.exceptions.Timeout:
+        logger.warning("API request timed out: %s", url)
+        st.warning("⚠️ API server did not respond in time. It may be overloaded.")
+        return {}
+    except requests.exceptions.HTTPError as exc:
+        logger.warning("API returned HTTP %s: %s", exc.response.status_code, url)
+        return {}
+    except Exception as exc:
+        logger.error("Unexpected error fetching %s: %s", url, exc)
+        return {}
+
+
+def _safe_api_post(url: str, payload: dict, timeout: int = 5) -> dict | None:
+    """POST *payload* to *url* and return the parsed JSON body on success.
+
+    Returns ``None`` on any network failure or non-2xx response and logs
+    the error.  Unlike ``_safe_api_get``, this helper does **not** show a
+    Streamlit banner because POST calls are typically made from background
+    threads where ``st.*`` calls are not safe.
+    """
+    try:
+        response = requests.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        logger.warning("API unreachable (ConnectionError) for POST: %s", url)
+        return None
+    except requests.exceptions.Timeout:
+        logger.warning("API POST timed out: %s", url)
+        return None
+    except requests.exceptions.HTTPError as exc:
+        logger.warning("API POST returned HTTP %s: %s", exc.response.status_code, url)
+        return None
+    except Exception as exc:
+        logger.error("Unexpected error posting to %s: %s", url, exc)
+        return None
+
+
 @_cache_data(ttl=20)
 def _fetch_health_snapshot(api_url: str) -> dict:
-    response = requests.get(f"{api_url}/health", timeout=2)
-    return response.json() if response.status_code == 200 else {}
+    """Return the API /health payload, or an empty dict if unreachable."""
+    return _safe_api_get(f"{api_url}/health", timeout=2)
 
 
 @_cache_data(ttl=5)
 def _fetch_stats_snapshot(api_url: str) -> dict:
-    response = requests.get(f"{api_url}/stats", timeout=5)
-    return response.json() if response.status_code == 200 else {}
+    """Return the API /stats payload, or an empty dict if unreachable."""
+    return _safe_api_get(f"{api_url}/stats", timeout=5)
 
 
 def _build_live_event(api_url: str, txn: dict) -> dict | None:
     """Execute one live fraud check off the UI thread and shape the dashboard payload."""
-    try:
-        start_t = time.time()
-        resp = requests.post(f"{api_url}/api/v1/fraud/check", json=txn, timeout=2)
-        latency = int((time.time() - start_t) * 1000)
-        if resp.status_code != 200:
-            return None
-
-        result = resp.json()
-        return {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "id": txn["transaction_id"],
-            "amount": txn["amount"],
-            "decision": result.get("decision", "ALLOW"),
-            "risk": result.get("risk_score", 0.0),
-            "latency": latency,
-            "explanation": result.get("explanation", ""),
-            "breakdown": result.get("breakdown", {}),
-        }
-    except Exception:
+    start_t = time.time()
+    result = _safe_api_post(f"{api_url}/api/v1/fraud/check", txn, timeout=2)
+    if result is None:
         return None
+    latency = int((time.time() - start_t) * 1000)
+    return {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "id": txn["transaction_id"],
+        "amount": txn["amount"],
+        "decision": result.get("decision", "ALLOW"),
+        "risk": result.get("risk_score", 0.0),
+        "latency": latency,
+        "explanation": result.get("explanation", ""),
+        "breakdown": result.get("breakdown", {}),
+    }
 
 
 def _render_model_explanation_comparison(transaction: dict, result: dict) -> None:
@@ -614,14 +686,8 @@ if page == "🧭 Command Center":
     if "live_event_txn" not in st.session_state:
         st.session_state.live_event_txn = None
 
-    try:
-        health = _fetch_health_snapshot(API_URL)
-    except Exception:
-        health = {}
-    try:
-        stats = _fetch_stats_snapshot(API_URL)
-    except Exception:
-        stats = {}
+    health = _fetch_health_snapshot(API_URL)
+    stats = _fetch_stats_snapshot(API_URL)
 
     # Generate a live event if active
     if live_mode:
@@ -648,9 +714,7 @@ if page == "🧭 Command Center":
                 "amount": float(random.choice([500, 2500, 50000, 150000, 300000])),
                 "currency": "INR",
                 "mode": random.choice(["UPI", "IMPS"]),
-
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                "timestamp": _get_timestamp()
             }
             st.session_state.live_event_txn = txn
             st.session_state.live_event_future = COMMAND_CENTER_IO_EXECUTOR.submit(
@@ -842,7 +906,7 @@ elif page == "💳 Transaction Scan":
                     "amount": float(amount),
                     "currency": currency,
                     "mode": mode,
-                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                    "timestamp": _get_timestamp(),
                 }
 
                 if device_id:
@@ -853,7 +917,10 @@ elif page == "💳 Transaction Scan":
                 # Make API call
                 try:
                     response = requests.post(
-                        f"{API_URL}/api/v1/fraud/check", json=transaction, timeout=10
+                        f"{API_URL}/api/v1/fraud/check",
+                        json=transaction,
+                        timeout=10,
+                        headers={"X-API-Key": "demo-key"},
                     )
 
                     if response.status_code == 200:
@@ -874,16 +941,17 @@ elif page == "💳 Transaction Scan":
                             )
                         with metric_cols[1]:
                             decision = result["decision"]
+                            status = str(decision).upper()
                             emoji = (
                                 "🟢"
-                                if decision == "ALLOW"
+                                if status in ["SAFE", "ALLOW", "APPROVE"]
                                 else "🟡"
-                                if decision == "REVIEW"
+                                if status == "REVIEW"
                                 else "🔴"
                             )
                             st.metric(
                                 "Decision",
-                                f"{emoji} {decision} ({decision.title()} decision)",
+                                f"{emoji} {status}",
                             )
                         with metric_cols[2]:
                             st.metric("Confidence", f"{result['confidence']:.1%}")
@@ -989,6 +1057,16 @@ elif page == "📁 Batch Triage":
             uploaded_file.seek(0)
             preview_df = pd.read_csv(uploaded_file, nrows=BATCH_PREVIEW_ROWS)
             uploaded_file.seek(0)
+
+            missing_cols = _validate_csv_columns(preview_df)
+            if missing_cols:
+                st.error(
+                    f"❌ Invalid CSV: Missing required column(s): **{', '.join(sorted(missing_cols))}**\n\n"
+                    f"Required columns are: `{', '.join(sorted(REQUIRED_CSV_COLUMNS))}`\n\n"
+                    "Please fix your file and re-upload."
+                )
+                st.stop()
+
             estimated_rows = _estimate_csv_rows(uploaded_file)
             uploaded_file.seek(0)
 
@@ -1035,7 +1113,10 @@ elif page == "📁 Batch Triage":
 
                         try:
                             response = requests.post(
-                                f"{API_URL}/api/v1/fraud/check", json=txn, timeout=30
+                                f"{API_URL}/api/v1/fraud/check",
+                                json=txn,
+                                timeout=30,
+                                headers={"X-API-Key": "demo-key"},
                             )
                             if response.status_code == 200:
                                 result = response.json()
@@ -2695,7 +2776,7 @@ elif page == "🧪 Innovation Lab":
                     "amount": 1,
                     "currency": "INR",
                     "mode": "UPI",
-                    "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                    "timestamp": _get_timestamp(),
                     "biometrics": {
                         "hold_times": hold_times,
                         "flight_times": flight_times,
