@@ -1,7 +1,7 @@
 name: "Semantic PR Title Enforcer"
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
 
 jobs:
@@ -35,3 +35,4 @@ jobs:
             revert
           requireScope: false
           wip: true
+          
