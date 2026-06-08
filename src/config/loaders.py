@@ -80,7 +80,22 @@ def load_threshold_yaml(thresholds_path: Optional[str | Path] = None) -> Dict[st
 def _bool_from_env(value: Optional[str], default: bool = False) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    normalized = value.strip().lower()
+
+    truthy = {"1", "true", "yes", "on"}
+    falsy = {"0", "false", "no", "off"}
+
+    if normalized in truthy:
+        return True
+
+    if normalized in falsy:
+        return False
+
+    raise ValueError(
+        f"Invalid boolean environment value: {value!r}. "
+        f"Expected one of: true, false, yes, no, on, off, 1, 0"
+    )
 
 
 def _build_settings_dict(
