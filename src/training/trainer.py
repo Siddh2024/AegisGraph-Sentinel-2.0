@@ -3,6 +3,7 @@ Training Pipeline for HTGNN Fraud Detection Model
 """
 # Working on model training pipeline improvements
 
+import logging
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,6 +19,8 @@ from contextlib import contextmanager
 
 from .losses import FocalLoss, CombinedLoss
 from ..utils.helpers import get_device
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -117,7 +120,7 @@ class Trainer:
         if self.mlflow_enabled:
             mlflow.set_tracking_uri(mlflow_config.get('tracking_uri', 'mlruns'))
             mlflow.set_experiment(mlflow_config.get('experiment_name', 'AegisGraph-Sentinel'))
-            print("MLflow tracking enabled")
+            logger.info("MLflow tracking enabled")
 
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """
@@ -248,10 +251,10 @@ class Trainer:
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
         
-        print(f"Training on device: {self.device}")
-        print(f"Total epochs: {num_epochs}")
-        print(f"Early stopping patience: {early_stopping_patience}")
-        print("-" * 80)
+        logger.info("Training on device: %s", self.device)
+        logger.info("Total epochs: %d", num_epochs)
+        logger.info("Early stopping patience: %d", early_stopping_patience)
+        logger.info("-" * 80)
 
         mlflow_config = self.config.get('mlflow', {})
         run_name = mlflow_config.get('run_name', None)
@@ -288,16 +291,19 @@ class Trainer:
                 if self.scheduler is not None:
                     self.scheduler.step()
                 
-                # Print metrics
-                print(f"\nEpoch {epoch+1}/{num_epochs}")
-                print(f"  Train - Loss: {train_metrics['loss']:.4f}, "
-                      f"F1: {train_metrics['f1']:.4f}, "
-                      f"Precision: {train_metrics['precision']:.4f}, "
-                      f"Recall: {train_metrics['recall']:.4f}")
-                print(f"  Val   - Loss: {val_metrics['loss']:.4f}, "
-                      f"F1: {val_metrics['f1']:.4f}, "
-                      f"Precision: {val_metrics['precision']:.4f}, "
-                      f"Recall: {val_metrics['recall']:.4f}")
+                # Log epoch metrics
+                logger.info(
+                    "Epoch %d/%d | Train loss=%.4f f1=%.4f precision=%.4f recall=%.4f",
+                    epoch + 1, num_epochs,
+                    train_metrics['loss'], train_metrics['f1'],
+                    train_metrics['precision'], train_metrics['recall'],
+                )
+                logger.info(
+                    "Epoch %d/%d | Val   loss=%.4f f1=%.4f precision=%.4f recall=%.4f",
+                    epoch + 1, num_epochs,
+                    val_metrics['loss'], val_metrics['f1'],
+                    val_metrics['precision'], val_metrics['recall'],
+                )
 
                 if self.mlflow_enabled:
                     mlflow.log_metrics({
@@ -321,7 +327,7 @@ class Trainer:
                     
                     # Save best model
                     self.save_checkpoint(save_path / 'htgnn_best.pt')
-                    print(f"New best model saved (F1: {self.best_val_f1:.4f})")
+                    logger.info("New best model saved (F1: %.4f)", self.best_val_f1)
 
                     if self.mlflow_enabled and mlflow_config.get('log_artifacts', True):
                         mlflow.pytorch.log_model(self.model, artifact_path="best_model")
@@ -330,10 +336,10 @@ class Trainer:
                 
                 # Early stopping
                 if self.patience_counter >= early_stopping_patience:
-                    print(f"\n Early stopping triggered after {epoch+1} epochs")
+                    logger.info("Early stopping triggered after %d epochs", epoch + 1)
                     break
-                
-                print("-" * 80)
+
+                logger.info("-" * 80)
 
             # Save final model
             self.save_checkpoint(save_path / 'htgnn_final.pt')
@@ -341,9 +347,9 @@ class Trainer:
             # Save training history
             self.save_history(save_path / 'training_history.yaml')
             
-            print("\nTraining completed!")
-            print(f"Best validation F1: {self.best_val_f1:.4f}")
-            print(f"Best validation loss: {self.best_val_loss:.4f}")
+            logger.info("Training completed!")
+            logger.info("Best validation F1: %.4f", self.best_val_f1)
+            logger.info("Best validation loss: %.4f", self.best_val_loss)
 
     def save_checkpoint(self, path: Path):
         """Save model checkpoint"""

@@ -1,3 +1,4 @@
+import logging
 import os
 import torch
 import torch.nn.functional as F
@@ -6,6 +7,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from .data_loader import AegisGraphLoader
+
+logger = logging.getLogger(__name__)
 
 # Attempt to import the real model architecture, fallback to a mock for pipeline testing
 try:
@@ -102,18 +105,18 @@ def train_epoch(model, loader, optimizer, device, max_grad_norm=1.0, scaler=None
     return avg_loss, avg_acc
 
 def main():
-    print("Initializing HTGNN Training Pipeline with Stability Enhancements...")
+    logger.info("Initializing HTGNN Training Pipeline with Stability Enhancements...")
 
     # Auto-detect GPU acceleration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Hardware utilized: {device}")
+    logger.info("Hardware utilized: %s", device)
 
     # 1. Load the Temporal Dataloader we built previously
     try:
         sampler = AegisGraphLoader(batch_size=64)
         train_loader = sampler.get_train_loader()
     except FileNotFoundError:
-        print("Error: Synthetic graph not found. Run graph generation first.")
+        logger.error("Synthetic graph not found. Run graph generation first.")
         return
 
     # 2. Initialize Model and Optimizer with stability parameters
@@ -142,13 +145,13 @@ def main():
     # scaler = GradScaler() if device.type == 'cuda' else None
 
     # 5. Execute Training Loop
-    print(f"\nStarting training for {epochs} epochs...")
-    print(f"Gradient clipping: enabled (max_norm=1.0)")
-    print(f"Learning rate scheduler: CosineAnnealing")
-    print(f"Optimizer: AdamW with AMSGrad variant\n")
+    logger.info("Starting training for %d epochs...", epochs)
+    logger.info("Gradient clipping: enabled (max_norm=1.0)")
+    logger.info("Learning rate scheduler: CosineAnnealing")
+    logger.info("Optimizer: AdamW with AMSGrad variant")
 
     for epoch in range(1, epochs + 1):
-        print(f"--- Epoch {epoch}/{epochs} ---")
+        logger.info("--- Epoch %d/%d ---", epoch, epochs)
 
         # Train with gradient clipping
         loss, acc = train_epoch(
@@ -159,16 +162,19 @@ def main():
             max_grad_norm=1.0,
             scaler=None  # Set to scaler object if using mixed precision
         )
-        print(f"Loss: {loss:.4f} | Accuracy: {acc:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+        logger.info(
+            "Loss: %.4f | Accuracy: %.4f | LR: %.2e",
+            loss, acc, optimizer.param_groups[0]['lr'],
+        )
 
         # Step the scheduler to decay learning rate
         scheduler.step()
 
     # 6. Save the compiled artifact
-    print("\nTraining Complete! Saving model weights...")
+    logger.info("Training Complete! Saving model weights...")
     os.makedirs("models", exist_ok=True)
     torch.save(model.state_dict(), "models/htgnn_v1.pt")
-    print("Artifact saved to models/htgnn_v1.pt")
+    logger.info("Artifact saved to models/htgnn_v1.pt")
 
 if __name__ == "__main__":
     main()
