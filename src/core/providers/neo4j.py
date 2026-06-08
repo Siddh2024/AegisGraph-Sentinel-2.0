@@ -103,11 +103,24 @@ class Neo4jGraphProvider:
         return cached_graph
 
     def _store_cached_subgraph(self, account_id: str, graph: nx.DiGraph, now: float) -> None:
+        self._cleanup_expired_subgraph_cache(now)
+
         self._subgraph_cache[account_id] = (now, graph)
         self._subgraph_cache.move_to_end(account_id)
 
         while len(self._subgraph_cache) > self.cache_max_entries:
             self._subgraph_cache.popitem(last=False)
+    def _cleanup_expired_subgraph_cache(self, now: float) -> None:
+        """Remove expired cache entries proactively."""
+        expired_keys = [
+            account_id
+            for account_id, (cache_time, _)
+            in self._subgraph_cache.items()
+            if now - cache_time >= self.cache_ttl_seconds
+        ]
+
+        for account_id in expired_keys:
+            self._subgraph_cache.pop(account_id, None)
 
     @property
     def is_active(self) -> bool:
