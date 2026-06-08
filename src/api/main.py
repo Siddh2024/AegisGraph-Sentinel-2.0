@@ -1364,7 +1364,7 @@ async def lifespan(app: FastAPI):
         task_registry=state.tasks,
         recovery_manager=recovery_manager,
     )
-    state.runtime.recovery_manager = recovery_manager
+    state.runtime.set_recovery_manager(recovery_manager)
     state.runtime.watchdog = watchdog
 
     def restart_honeypot_task():
