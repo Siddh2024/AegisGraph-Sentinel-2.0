@@ -37,6 +37,7 @@ class RecoveryManager:
         self._resource_manager = resource_manager
         self._config_registry: Any = None
         self._policy_engine: Any = None
+        self._recovery_in_progress: Dict[str, bool] = {}  # Track recovery state per service
 
     def _audit(self, event_type: str, severity: str = "info", **metadata: Any) -> None:
         try:
@@ -79,6 +80,15 @@ class RecoveryManager:
         Coordinates the recovery attempt for a service.
         Returns True if recovery was successfully attempted, False otherwise.
         """
+        # Check if recovery is already in progress for this service
+        if self._recovery_in_progress.get(name, False):
+            self._logger.info(
+                f"Recovery already in progress for service: {name}",
+                event_type="recovery_already_in_progress",
+                metadata={"service": name},
+            )
+            return False
+
         callback = self._callbacks.get(name)
         if callback is None:
             self._logger.info(
@@ -151,6 +161,9 @@ class RecoveryManager:
             self._audit("recovery_throttled", "warning", service=name)
             return False
 
+        # Mark recovery as in progress
+        self._recovery_in_progress[name] = True
+
         self.health_monitor.increment_restart_attempts(name)
         new_attempt_count = health.restart_attempts + 1
 
@@ -204,6 +217,9 @@ class RecoveryManager:
                 )
                 self._audit("recovery_attempt_failed", "error", service=name, error=str(exc))
                 self.health_monitor.mark_failed(name, error=f"Recovery failed: {exc}")
+            finally:
+                # Clear recovery in progress flag
+                self._recovery_in_progress[name] = False
 
         await run_callback_safely()
         return True
