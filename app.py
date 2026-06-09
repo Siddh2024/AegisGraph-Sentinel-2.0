@@ -4042,3 +4042,21 @@ st.markdown(
     '<p style="text-align: center; color: #94a3b8; font-weight: 500;">© 2026 AegisGraph Sentinel 2.0 | Detecting the Flow, Protecting the Soul 🛡️</p>',
     unsafe_allow_html=True,
 )
+
+# --- ADVANCED CONCURRENCY IMPLEMENTATION FOR GSOC ---
+# Import the custom in-memory ring buffer we created to handle extreme data peaks
+from ring_buffer_concurrency import InMemoryRingBuffer
+
+# Initialize the global telemetry sentinel shield ring buffer array
+sentinel_telemetry_buffer = InMemoryRingBuffer(capacity=1024)
+
+def process_incoming_stream_safely(new_log_data):
+    """
+    Layman Safe Ingestion System: Bypasses immediate heavy graph processing context 
+    by feeding logs straight into our lock-free buffer array.
+    """
+    is_saved = sentinel_telemetry_buffer.enqueue(new_log_data)
+    if not is_saved:
+        print("[Warning] Buffer capacity exceeded threshold! Applying safe backpressure drop.")
+    return is_saved
+# --- END OF SENTINEL SHIELD ENGINE CONFIGURATION ---
