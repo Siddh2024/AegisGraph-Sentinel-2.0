@@ -1442,3 +1442,152 @@ class GovernanceStatsResponse(BaseModel):
     critical_findings: int
     dashboards_stored: int
     reports_stored: int
+
+
+# =============================================================================
+# Advanced Analytics & BI Schemas
+# =============================================================================
+
+class MetricDefinitionRequest(BaseModel):
+    """Request to define a metric."""
+    name: str
+    description: str
+    metric_type: str
+    aggregation: str
+    category: str
+    unit: str
+    formula: Optional[str] = None
+
+
+class MetricValueRequest(BaseModel):
+    """Request to record a metric value."""
+    metric_id: str
+    value: float
+    dimensions: Dict[str, str] = {}
+
+
+class KPIRequest(BaseModel):
+    """Request to create a KPI."""
+    name: str
+    description: str
+    metric_id: str
+    target_value: float
+    warning_threshold: float
+    critical_threshold: float
+    category: str
+    owner: Optional[str] = None
+
+
+class KPIResponse(BaseModel):
+    """Response containing KPI data."""
+    kpi_id: str
+    name: str
+    target_value: float
+    current_value: Optional[float]
+    change_percent: Optional[float]
+    status: str
+    category: str
+
+
+class TrendAnalysisRequest(BaseModel):
+    """Request to perform trend analysis."""
+    metric_name: str
+    data_points: List[float]
+    period_start: str
+    period_end: str
+
+
+class TrendAnalysisResponse(BaseModel):
+    """Response containing trend analysis."""
+    analysis_id: str
+    metric_name: str
+    direction: str
+    slope: float
+    volatility: float
+    anomaly_detected: bool
+    forecast_values: List[float]
+    timestamp: str
+
+
+class CorrelationAnalysisRequest(BaseModel):
+    """Request to perform correlation analysis."""
+    variable_a: List[float]
+    variable_b: List[float]
+    variable_a_name: str
+    variable_b_name: str
+
+
+class CorrelationAnalysisResponse(BaseModel):
+    """Response containing correlation analysis."""
+    correlation_id: str
+    variable_a: str
+    variable_b: str
+    correlation_coefficient: float
+    p_value: float
+    significance: str
+    interpretation: str
+    timestamp: str
+
+
+class DashboardRequest(BaseModel):
+    """Request to create BI dashboard."""
+    name: str
+    description: str
+    chart_ids: List[str] = []
+    kpi_ids: List[str] = []
+    refresh_interval: int = 300
+
+
+class DashboardResponse(BaseModel):
+    """Response containing dashboard data."""
+    dashboard_id: str
+    name: str
+    description: str
+    chart_count: int
+    kpi_count: int
+    refresh_interval: int
+    timestamp: str
+
+
+class ChartDataRequest(BaseModel):
+    """Request for chart data."""
+    chart_id: str
+    time_range: str = "30d"
+
+
+class ReportGenerationRequest(BaseModel):
+    """Request to generate a report."""
+    report_type: str
+    content_config: Dict[str, Any] = {}
+    format: str = "PDF"
+
+
+class ReportGenerationResponse(BaseModel):
+    """Response containing generated report."""
+    report_id: str
+    report_type: str
+    format: str
+    generated_at: str
+    page_count: int
+
+
+class ScheduledReportRequest(BaseModel):
+    """Request to create scheduled report."""
+    name: str
+    description: str
+    schedule: str
+    report_type: str
+    content_config: Dict[str, Any] = {}
+    recipients: List[str] = []
+    format: str = "PDF"
+
+
+class AnalyticsStatsResponse(BaseModel):
+    """Response containing analytics statistics."""
+    metric_definitions_stored: int
+    kpis_stored: int
+    trends_stored: int
+    dashboards_stored: int
+    reports_stored: int
+    insights_stored: int
+    unacknowledged_insights: int

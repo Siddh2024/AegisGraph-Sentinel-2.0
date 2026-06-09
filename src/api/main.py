@@ -214,6 +214,22 @@ from .schemas import (
     GovernanceReportRequest,
     GovernanceReportResponse,
     GovernanceStatsResponse,
+    # Advanced Analytics & BI (Phase 15)
+    MetricDefinitionRequest,
+    MetricValueRequest,
+    KPIRequest,
+    KPIResponse,
+    TrendAnalysisRequest,
+    TrendAnalysisResponse,
+    CorrelationAnalysisRequest,
+    CorrelationAnalysisResponse,
+    DashboardRequest,
+    DashboardResponse,
+    ChartDataRequest,
+    ReportGenerationRequest,
+    ReportGenerationResponse,
+    ScheduledReportRequest,
+    AnalyticsStatsResponse,
 )
 from ..case_management import get_case_store
 from ..case_management.models import CasePriority, CaseStatus, EvidenceType, validate_status_transition
@@ -4682,6 +4698,445 @@ async def get_governance_stats():
         "critical_findings": stats.get("critical_findings", 0),
         "dashboards_stored": stats.get("dashboards_stored", 0),
         "reports_stored": stats.get("reports_stored", 0),
+        "processing_time_ms": processing_time,
+    }
+
+
+# =============================================================================
+# Advanced Analytics & BI Endpoints
+# =============================================================================
+
+@app.post(
+    "/api/v1/analytics/metric/define",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Define a new metric",
+)
+async def define_metric(
+    request: MetricDefinitionRequest,
+):
+    """Define a new analytics metric."""
+    import time
+    from src.analytics_business_intelligence import get_data_warehouse_module
+    from src.analytics_business_intelligence.models import MetricType, AggregationType
+    
+    start_time = time.time()
+    
+    module = get_data_warehouse_module()
+    
+    # Parse types
+    metric_type = MetricType(request.metric_type.upper())
+    aggregation = AggregationType(request.aggregation.upper())
+    
+    metric = module.define_metric(
+        name=request.name,
+        description=request.description,
+        metric_type=metric_type,
+        aggregation=aggregation,
+        category=request.category,
+        unit=request.unit,
+        formula=request.formula,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "metric": {
+            "metric_id": metric.metric_id,
+            "name": metric.name,
+            "metric_type": metric.metric_type.value,
+            "aggregation": metric.aggregation.value,
+            "category": metric.category,
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/metric/record",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Record a metric value",
+)
+async def record_metric_value(
+    request: MetricValueRequest,
+):
+    """Record a metric value."""
+    import time
+    from src.analytics_business_intelligence import get_data_warehouse_module
+    
+    start_time = time.time()
+    
+    module = get_data_warehouse_module()
+    
+    value = module.record_metric_value(
+        metric_id=request.metric_id,
+        value=request.value,
+        dimensions=request.dimensions,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "value_id": value.value_id,
+        "metric_id": value.metric_id,
+        "value": value.value,
+        "timestamp": value.timestamp.isoformat(),
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.get(
+    "/api/v1/analytics/kpis",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get all KPIs",
+)
+async def get_kpis(
+    status: str = Query(None, description="Filter by status"),
+    category: str = Query(None, description="Filter by category"),
+):
+    """Get all KPIs with optional filters."""
+    import time
+    from src.analytics_business_intelligence import get_kpi_engine_module
+    
+    start_time = time.time()
+    
+    engine = get_kpi_engine_module()
+    dashboard = engine.get_kpi_dashboard()
+    
+    kpis = engine._store.get_all_kpis()
+    if status:
+        kpis = [k for k in kpis if k.status == status]
+    if category:
+        kpis = [k for k in kpis if k.category == category]
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "kpis": [
+            {
+                "kpi_id": k.kpi_id,
+                "name": k.name,
+                "target_value": k.target_value,
+                "current_value": k.current_value,
+                "change_percent": k.change_percent,
+                "status": k.status,
+                "category": k.category,
+            }
+            for k in kpis
+        ],
+        "summary": dashboard,
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.get(
+    "/api/v1/analytics/kpi/dashboard",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get KPI dashboard",
+)
+async def get_kpi_dashboard():
+    """Get KPI dashboard summary."""
+    import time
+    from src.analytics_business_intelligence import get_kpi_engine_module
+    
+    start_time = time.time()
+    
+    engine = get_kpi_engine_module()
+    dashboard = engine.get_kpi_dashboard()
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "dashboard": dashboard,
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/trend/analyze",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Perform trend analysis",
+)
+async def analyze_trend(
+    request: TrendAnalysisRequest,
+):
+    """Perform trend analysis on data."""
+    import time
+    from datetime import datetime, timezone
+    from src.analytics_business_intelligence import get_advanced_analytics_module
+    
+    start_time = time.time()
+    
+    module = get_advanced_analytics_module()
+    
+    # Parse dates
+    period_start = datetime.fromisoformat(request.period_start.replace('Z', '+00:00'))
+    period_end = datetime.fromisoformat(request.period_end.replace('Z', '+00:00'))
+    
+    analysis = module.analyze_trend(
+        metric_name=request.metric_name,
+        data_points=request.data_points,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "analysis": {
+            "analysis_id": analysis.analysis_id,
+            "metric_name": analysis.metric_name,
+            "direction": analysis.direction,
+            "slope": analysis.slope,
+            "volatility": analysis.volatility,
+            "anomaly_detected": analysis.anomaly_detected,
+            "forecast_values": analysis.forecast_values,
+            "timestamp": analysis.created_at.isoformat(),
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/correlation/analyze",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Perform correlation analysis",
+)
+async def analyze_correlation(
+    request: CorrelationAnalysisRequest,
+):
+    """Perform correlation analysis between variables."""
+    import time
+    from src.analytics_business_intelligence import get_advanced_analytics_module
+    
+    start_time = time.time()
+    
+    module = get_advanced_analytics_module()
+    
+    result = module.analyze_correlation(
+        variable_a=request.variable_a,
+        variable_b=request.variable_b,
+        variable_a_name=request.variable_a_name,
+        variable_b_name=request.variable_b_name,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "correlation": {
+            "correlation_id": result.correlation_id,
+            "variable_a": result.variable_a,
+            "variable_b": result.variable_b,
+            "correlation_coefficient": result.correlation_coefficient,
+            "p_value": result.p_value,
+            "significance": result.significance,
+            "interpretation": result.interpretation,
+            "timestamp": result.created_at.isoformat(),
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/dashboard/create",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Create BI dashboard",
+)
+async def create_dashboard(
+    request: DashboardRequest,
+):
+    """Create a BI dashboard."""
+    import time
+    from src.analytics_business_intelligence import get_bi_dashboard_module
+    
+    start_time = time.time()
+    
+    module = get_bi_dashboard_module()
+    
+    dashboard = module.create_dashboard(
+        name=request.name,
+        description=request.description,
+        chart_ids=request.chart_ids,
+        kpi_ids=request.kpi_ids,
+        refresh_interval=request.refresh_interval,
+        created_by="api",
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "dashboard": {
+            "dashboard_id": dashboard.dashboard_id,
+            "name": dashboard.name,
+            "description": dashboard.description,
+            "chart_count": len(dashboard.charts),
+            "kpi_count": len(dashboard.kpis),
+            "refresh_interval": dashboard.refresh_interval,
+            "timestamp": dashboard.created_at.isoformat(),
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/report/generate",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Generate analytics report",
+)
+async def generate_analytics_report(
+    request: ReportGenerationRequest,
+):
+    """Generate an analytics report."""
+    import time
+    from src.analytics_business_intelligence import get_report_automation_module
+    
+    start_time = time.time()
+    
+    module = get_report_automation_module()
+    
+    report = module.generate_report(
+        report_type=request.report_type,
+        content_config=request.content_config,
+        format=request.format,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "report": {
+            "report_id": report["report_id"],
+            "report_type": report["report_type"],
+            "format": report["format"],
+            "generated_at": report["generated_at"],
+            "page_count": report["page_count"],
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.post(
+    "/api/v1/analytics/report/schedule",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Schedule automated report",
+)
+async def schedule_report(
+    request: ScheduledReportRequest,
+):
+    """Schedule an automated report."""
+    import time
+    from src.analytics_business_intelligence import get_report_automation_module
+    from src.analytics_business_intelligence.models import ReportSchedule
+    
+    start_time = time.time()
+    
+    module = get_report_automation_module()
+    
+    # Parse schedule
+    try:
+        schedule = ReportSchedule(request.schedule.upper())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid schedule: {request.schedule}")
+    
+    report = module.create_scheduled_report(
+        name=request.name,
+        description=request.description,
+        schedule=schedule,
+        report_type=request.report_type,
+        content_config=request.content_config,
+        recipients=request.recipients,
+        report_format=request.format,
+    )
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "report": {
+            "report_id": report.report_id,
+            "name": report.name,
+            "schedule": report.schedule.value,
+            "enabled": report.enabled,
+            "next_run": report.next_run.isoformat() if report.next_run else None,
+        },
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.get(
+    "/api/v1/analytics/insights",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get business insights",
+)
+async def get_insights(
+    unacknowledged_only: bool = Query(False, description="Only unacknowledged"),
+):
+    """Get business insights from analytics."""
+    import time
+    from src.analytics_business_intelligence import get_analytics_store
+    
+    start_time = time.time()
+    
+    store = get_analytics_store()
+    
+    if unacknowledged_only:
+        insights = store.get_unacknowledged_insights()
+    else:
+        insights = store.get_recent_insights()
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "insights": [
+            {
+                "insight_id": i.insight_id,
+                "title": i.title,
+                "description": i.description,
+                "insight_type": i.insight_type,
+                "severity": i.severity,
+                "generated_at": i.generated_at.isoformat(),
+                "acknowledged": i.acknowledged,
+            }
+            for i in insights
+        ],
+        "total_insights": len(insights),
+        "processing_time_ms": processing_time,
+    }
+
+
+@app.get(
+    "/api/v1/analytics/stats",
+    tags=["Advanced Analytics"],
+    dependencies=[Depends(require_role(Role.ANALYST))],
+    summary="Get analytics statistics",
+)
+async def get_analytics_stats():
+    """Get analytics system statistics."""
+    import time
+    from src.analytics_business_intelligence import get_analytics_store
+    
+    start_time = time.time()
+    
+    store = get_analytics_store()
+    stats = store.get_stats()
+    
+    processing_time = (time.time() - start_time) * 1000
+    
+    return {
+        "metric_definitions_stored": stats.get("metric_definitions_stored", 0),
+        "kpis_stored": stats.get("kpis_stored", 0),
+        "trends_stored": stats.get("trends_stored", 0),
+        "dashboards_stored": stats.get("dashboards_stored", 0),
+        "reports_stored": stats.get("reports_stored", 0),
+        "insights_stored": stats.get("insights_stored", 0),
+        "unacknowledged_insights": stats.get("unacknowledged_insights", 0),
         "processing_time_ms": processing_time,
     }
 
