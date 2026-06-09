@@ -36,6 +36,7 @@ class RecoveryManager:
         self._dispatcher = dispatcher  # Optional[EventDispatcher]
         self._resource_manager = resource_manager
         self._config_registry: Any = None
+        self._policy_engine: Any = None
 
     def _audit(self, event_type: str, severity: str = "info", **metadata: Any) -> None:
         try:
@@ -54,6 +55,9 @@ class RecoveryManager:
 
     def set_config_registry(self, registry: Any) -> None:
         self._config_registry = registry
+
+    def set_policy_engine(self, policy_engine: Any) -> None:
+        self._policy_engine = policy_engine
 
     def get_configuration_status(self) -> Dict[str, Any]:
         return {
@@ -95,6 +99,30 @@ class RecoveryManager:
             return False
 
         max_attempts = self._max_attempts.get(name, 3)
+        if self._policy_engine is not None:
+            result = self._policy_engine.evaluate(
+                "max_recovery_attempts",
+                {
+                    "service": name,
+                    "restart_attempts": health.restart_attempts,
+                    "max_attempts": max_attempts,
+                },
+            )
+            if not result.allowed:
+                self._logger.warning(
+                    f"Recovery denied by policy {result.policy_name} for service: {name}",
+                    event_type="recovery_policy_denied",
+                    metadata={"service": name, "policy": result.policy_name, "reason": result.reason},
+                )
+                self._audit(
+                    "policy_violation",
+                    "warning",
+                    service=name,
+                    policy=result.policy_name,
+                    reason=result.reason,
+                )
+                return False
+
         if health.restart_attempts >= max_attempts:
             self._logger.error(
                 f"Service {name} reached maximum recovery attempts ({max_attempts}). Stopping recovery.",

@@ -15,11 +15,38 @@ logger = logging.getLogger(__name__)
 class ConfigReloadManager:
     """Validates and atomically applies proposed in-memory updates."""
 
-    def __init__(self, registry: ConfigRegistry, audit_logger: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        registry: ConfigRegistry,
+        audit_logger: Optional[Any] = None,
+        policy_engine: Optional[Any] = None,
+    ) -> None:
         self.registry = registry
         self.audit_logger = audit_logger
+        self.policy_engine = policy_engine
 
     def reload(self, updates: Dict[str, Any]) -> ValidationResult:
+        if self.policy_engine is not None:
+            policy_result = self.policy_engine.evaluate(
+                "config_reload_allowed",
+                {
+                    "updates": list(updates),
+                    "update_count": len(updates),
+                    "config_reload_allowed": True,
+                },
+            )
+            if not policy_result.allowed:
+                errors = [f"policy denied reload: {policy_result.reason}"]
+                self._audit(
+                    "policy_violation",
+                    "warning",
+                    policy=policy_result.policy_name,
+                    reason=policy_result.reason,
+                    updates=list(updates),
+                )
+                self._audit("config_reload_failed", "warning", updates=list(updates), errors=errors)
+                return ValidationResult(valid=False, errors=errors)
+
         proposed = []
         errors = []
 
