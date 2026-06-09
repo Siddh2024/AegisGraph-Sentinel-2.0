@@ -117,10 +117,11 @@ class RiskPropagator:
         current_depth = 0
         
         # Queue for BFS propagation: (entity_id, current_risk, depth)
-        queue: List[Tuple[str, float, int]] = [(source_entity_id, base_risk, 0)]
-        
+        # Queue for BFS propagation: (entity_id, current_risk, depth)
+        queue: deque[Tuple[str, float, int]] = deque([(source_entity_id, base_risk, 0)])
+
         while queue:
-            current_id, current_risk, depth = queue.pop(0)
+            current_id, current_risk, depth = queue.popleft()
             
             if depth > self._config.max_propagation_depth:
                 continue
