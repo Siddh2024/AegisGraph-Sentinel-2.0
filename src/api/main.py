@@ -230,6 +230,13 @@ from .schemas import (
     ReportGenerationResponse,
     ScheduledReportRequest,
     AnalyticsStatsResponse,
+    # Zero Trust Security (Phase 31)
+    ZeroTrustEvaluateRequest,
+    DeviceRegisterRequest,
+    DeviceRegisterResponse,
+    SessionAnalyzeRequest,
+    SessionAnalyzeResponse,
+    PolicyResponse,
 )
 from ..case_management import get_case_store
 from ..case_management.models import CasePriority, CaseStatus, EvidenceType, validate_status_transition
@@ -5159,3 +5166,200 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# =============================================================================
+# Zero Trust Security Endpoints (Phase 31)
+# =============================================================================
+
+@app.post(
+    "/api/v1/zero-trust/evaluate",
+    tags=["Zero Trust"],
+    summary="Evaluate trust using Zero Trust Security",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def evaluate_zero_trust(request: ZeroTrustEvaluateRequest):
+    """Perform comprehensive zero trust evaluation."""
+    import time
+    from src.zero_trust import get_zero_trust_service
+    start_time = time.time()
+    service = get_zero_trust_service()
+    result = service.evaluate(
+        user_id=request.user_id, device_id=request.device_id, session_id=request.session_id,
+        ip_address=request.ip_address, location=request.location, user_agent=request.user_agent,
+        resource=request.resource, action=request.action,
+        authentication_method=request.authentication_method,
+        authentication_strength=request.authentication_strength, device_info=request.device_info,
+    )
+    result["processing_time_ms"] = (time.time() - start_time) * 1000
+    return result
+
+
+@app.post(
+    "/api/v1/zero-trust/device/register",
+    tags=["Zero Trust"],
+    summary="Register a device for Zero Trust",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def register_device(request: DeviceRegisterRequest):
+    """Register a device for a user in the Zero Trust system."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    device_info = {"device_type": request.device_type, "os_version": request.os_version,
+                   "browser": request.browser, "browser_version": request.browser_version,
+                   "screen_resolution": request.screen_resolution, "timezone": request.timezone,
+                   "language": request.language, "ip_address": request.ip_address,
+                   "mac_address": request.mac_address, "serial_number": request.serial_number}
+    result = service.register_device(request.user_id, device_info)
+    return DeviceRegisterResponse(device_id=result["device_id"], fingerprint_id=result["fingerprint"]["fingerprint_id"],
+                                  status=result["status"], trust_score=result["trust_score"],
+                                  first_seen=result["first_seen"], last_seen=result["last_seen"],
+                                  verification_required=result["trust_score"] < 0.5)
+
+
+@app.get(
+    "/api/v1/zero-trust/device/{device_id}",
+    tags=["Zero Trust"],
+    summary="Get device information",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def get_device(device_id: str):
+    """Get device trust information by device ID."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    device = service.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
+
+
+@app.post(
+    "/api/v1/zero-trust/session/analyze",
+    tags=["Zero Trust"],
+    summary="Analyze session risk",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def analyze_session(request: SessionAnalyzeRequest):
+    """Analyze session for risk factors and anomalies."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    context_data = {"session_id": request.session_id, "device_id": request.device_id,
+                    "ip_address": request.ip_address, "location": request.location,
+                    "user_agent": request.user_agent, "resource": request.resource,
+                    "action": request.action, "auth_method": request.auth_method,
+                    "auth_strength": request.auth_strength,
+                    "session_attributes": request.session_attributes or {}}
+    result = service.analyze_session(request.user_id, context_data)
+    return SessionAnalyzeResponse(session_id=result["session_id"], user_id=result["user_id"],
+                                  risk_level=result["risk_level"], risk_score=result["risk_score"],
+                                  anomalies_detected=result["anomalies_detected"],
+                                  location_risk=result["location_risk"],
+                                  behavior_deviation=result["behavior_deviation"],
+                                  velocity_anomaly=result["velocity_anomaly"],
+                                  unusual_operations=result["unusual_operations"],
+                                  recommended_actions=result["recommended_actions"],
+                                  evaluated_at=result["evaluated_at"])
+
+
+@app.get(
+    "/api/v1/zero-trust/policies",
+    tags=["Zero Trust"],
+    summary="Get all policies",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def get_policies():
+    """Get all configured Zero Trust policies."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    policies = service.get_policies()
+    return [PolicyResponse(policy_id=p["policy_id"], name=p["name"], description=p["description"],
+                           priority=p["priority"], enabled=p["enabled"], conditions=p["conditions"],
+                           actions=p["actions"], created_at=p["created_at"], updated_at=p["updated_at"])
+            for p in policies]
+
+
+@app.get(
+    "/api/v1/zero-trust/stats",
+    tags=["Zero Trust"],
+    summary="Get Zero Trust statistics",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def get_zero_trust_stats():
+    """Get comprehensive Zero Trust system statistics."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    return service.get_stats()
+
+
+@app.get(
+    "/api/v1/zero-trust/session/{session_id}",
+    tags=["Zero Trust"],
+    summary="Get session risk assessment",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def get_session_risk(session_id: str):
+    """Get session risk assessment by session ID."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    session = service.get_session_risk(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@app.get(
+    "/api/v1/zero-trust/user/{user_id}/anomalies",
+    tags=["Zero Trust"],
+    summary="Get user anomaly summary",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def get_user_anomalies(user_id: str):
+    """Get anomaly summary for a specific user."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    return service.get_user_anomalies(user_id)
+
+
+@app.post(
+    "/api/v1/zero-trust/device/{device_id}/block",
+    tags=["Zero Trust"],
+    summary="Block a device",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def block_device(device_id: str, reason: str = Query("", description="Reason for blocking")):
+    """Block a device from accessing the system."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    result = service.block_device(device_id, reason)
+    if not result:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return result
+
+
+@app.post(
+    "/api/v1/zero-trust/device/{device_id}/unblock",
+    tags=["Zero Trust"],
+    summary="Unblock a device",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def unblock_device(device_id: str):
+    """Unblock a previously blocked device."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    result = service.unblock_device(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return result
+
+
+@app.get(
+    "/api/v1/zero-trust/user/{user_id}/devices",
+    tags=["Zero Trust"],
+    summary="Get user devices",
+    dependencies=[Depends(require_role(Role.ANALYST))],
+)
+async def get_user_devices(user_id: str):
+    """Get all devices for a user."""
+    from src.zero_trust import get_zero_trust_service
+    service = get_zero_trust_service()
+    return service.get_user_devices(user_id)
