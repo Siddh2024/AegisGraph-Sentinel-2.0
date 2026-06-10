@@ -93,12 +93,12 @@ class FraudNarrativeGenerator:
         summary += f"Risk Level: {case.severity.value.upper()}\n"
         summary += f"Priority: {case.priority.value.upper()}\n\n"
         summary += f"Summary:\n{narrative.summary}\n\n"
-        summary += f"Key Findings:\n"
+        summary += "Key Findings:\n"
         for i, finding in enumerate(narrative.key_findings[:5], 1):
             summary += f"  {i}. {finding}\n"
-        summary += f"\nRecommended Actions:\n"
-        summary += f"  - Review evidence within 24 hours\n"
-        summary += f"  - Determine appropriate action based on risk level\n"
+        summary += "\nRecommended Actions:\n"
+        summary += "  - Review evidence within 24 hours\n"
+        summary += "  - Determine appropriate action based on risk level\n"
         return summary
 
     def _generate_summary(
@@ -305,7 +305,7 @@ class FraudNarrativeGenerator:
         events: List[Dict[str, Any]],
     ) -> List[str]:
         """Build chronological sequence."""
-        return [f"{i+1}. {e['type']} at {e['timestamp']}" for i, e in enumerate(events)]
+        return [f"{i + 1}. {e['type']} at {e['timestamp']}" for i, e in enumerate(events)]
 
     def _identify_critical_path(
         self,
@@ -326,8 +326,7 @@ class FraudNarrativeGenerator:
 
         # Check for time gaps
         for i in range(1, len(events)):
-            from datetime import datetime
-            t1 = datetime.fromisoformat(events[i-1]["timestamp"])
+            t1 = datetime.fromisoformat(events[i - 1]["timestamp"])
             t2 = datetime.fromisoformat(events[i]["timestamp"])
             gap_hours = (t2 - t1).total_seconds() / 3600
 

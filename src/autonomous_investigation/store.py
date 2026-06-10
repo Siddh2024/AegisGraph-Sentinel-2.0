@@ -6,10 +6,21 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
-import uuid
+
+from .models import (
+    InvestigationCase,
+    EvidenceArtifact,
+    RiskAssessment,
+    FraudNarrative,
+    EntityCorrelation,
+    FraudPattern,
+    CasePriority,
+    InvestigationStatus,
+    DecisionRecommendation,
+    AuditRecord,
+)
 
 
 class LRUCache(OrderedDict):
@@ -359,10 +370,6 @@ class InvestigationStore:
                 for priority, cases in self._case_by_priority.items()
             },
         }
-
-
-# Import for type hints
-from .models import InvestigationCase, EvidenceArtifact, RiskAssessment, FraudNarrative, EntityCorrelation, FraudPattern, CasePriority, InvestigationStatus
 
 
 # Global store instance

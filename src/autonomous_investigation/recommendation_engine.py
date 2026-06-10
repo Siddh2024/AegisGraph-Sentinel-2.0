@@ -5,7 +5,7 @@ Recommendation Engine for analyst copilot recommendations.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import uuid
 
 from .models import (

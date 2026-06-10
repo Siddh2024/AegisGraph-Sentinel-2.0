@@ -3,8 +3,7 @@ Tests for Autonomous Fraud Investigation & Decision Intelligence Platform.
 """
 
 import pytest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, AsyncMock
+from datetime import datetime, timezone
 
 from src.autonomous_investigation import (
     # Models
@@ -18,9 +17,7 @@ from src.autonomous_investigation import (
     EvidenceArtifact,
     RiskAssessment,
     DecisionRecommendation,
-    FraudNarrative,
     # Store
-    InvestigationStore,
     get_investigation_store,
     reset_store,
     # Engines
@@ -28,7 +25,6 @@ from src.autonomous_investigation import (
     get_evidence_collector,
     get_decision_engine,
     get_case_prioritization_engine,
-    get_report_generator,
     get_recommendation_engine,
     get_explainability_engine,
     # Service
@@ -352,7 +348,6 @@ class TestExplainability:
         import asyncio
 
         engine = get_explainability_engine()
-        store = get_investigation_store()
 
         case = InvestigationCase(
             case_id="case-1",
