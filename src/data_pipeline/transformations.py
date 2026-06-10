@@ -202,8 +202,9 @@ class DataTransformer:
             if all(c in allowed_chars for c in expr):
                 return eval(expr)
             return 0.0
-        except Exception as e:
-            logger.debug("Formula evaluation failed: %s", e)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug("Formula evaluation failed: %s", exc)
             return 0.0
     
     def _evaluate_conditions(
