@@ -5141,6 +5141,88 @@ async def get_analytics_stats():
     }
 
 
+# ==================== Identity Federation Endpoints ====================
+
+_identity_federation_service = None
+
+def get_identity_federation_service() -> "IdentityFederationService":
+    global _identity_federation_service
+    if _identity_federation_service is None:
+        from src.identity_federation import IdentityFederationService
+        _identity_federation_service = IdentityFederationService()
+    return _identity_federation_service
+
+@app.post("/api/v1/identity/providers/register", tags=["Identity Federation"], summary="Register Identity Provider", dependencies=[Depends(require_role(Role.ADMIN))])
+async def register_provider(name: str = Body(...), provider_type: str = Body(...), issuer: str = Body(...), sso_provider: Optional[str] = Body(None), client_id: Optional[str] = Body(None), client_secret: Optional[str] = Body(None), metadata_url: Optional[str] = Body(None)):
+    from src.identity_federation import IdentityProviderType, SSOProvider as IdpSSOProvider
+    service = get_identity_federation_service()
+    provider, is_valid, errors = service.register_provider(name=name, provider_type=IdentityProviderType(provider_type), issuer=issuer, sso_provider=IdpSSOProvider(sso_provider) if sso_provider else None, client_id=client_id, client_secret=client_secret, metadata_url=metadata_url)
+    if not is_valid: raise HTTPException(status_code=400, detail={"message": "Validation failed", "errors": errors})
+    return {"provider_id": provider.id, "name": provider.name, "provider_type": provider.provider_type.value if hasattr(provider.provider_type, 'value') else provider.provider_type, "issuer": provider.issuer, "enabled": provider.enabled}
+
+@app.get("/api/v1/identity/providers", tags=["Identity Federation"], summary="List Identity Providers", dependencies=[Depends(require_role(Role.VIEWER))])
+async def list_providers(enabled_only: bool = Query(False)):
+    service = get_identity_federation_service()
+    providers = service.list_providers(enabled_only=enabled_only)
+    return [{"provider_id": p.id, "name": p.name, "provider_type": p.provider_type.value if hasattr(p.provider_type, 'value') else p.provider_type, "sso_provider": str(p.sso_provider) if p.sso_provider else None, "issuer": p.issuer, "enabled": p.enabled} for p in providers]
+
+@app.get("/api/v1/identity/providers/{provider_id}", tags=["Identity Federation"], summary="Get Identity Provider", dependencies=[Depends(require_role(Role.VIEWER))])
+async def get_provider(provider_id: str):
+    service = get_identity_federation_service()
+    provider = service.get_provider(provider_id)
+    if not provider: raise HTTPException(status_code=404, detail="Provider not found")
+    return {"provider_id": provider.id, "name": provider.name, "provider_type": provider.provider_type.value if hasattr(provider.provider_type, 'value') else provider.provider_type, "issuer": provider.issuer, "enabled": provider.enabled}
+
+@app.post("/api/v1/identity/authenticate", tags=["Identity Federation"], summary="Initiate Authentication")
+async def authenticate(provider_id: str = Body(...), return_url: Optional[str] = Body(None), protocol: Optional[str] = Body(None), ip_address: Optional[str] = Header(None), user_agent: Optional[str] = Header(None)):
+    service = get_identity_federation_service()
+    response = service.authenticate(provider_id=provider_id, return_url=return_url, protocol=protocol, ip_address=ip_address, user_agent=user_agent)
+    if not response.success: raise HTTPException(status_code=400, detail=response.error_description or response.error)
+    return {"success": True, "redirect_url": response.redirect_url, "provider_id": response.provider_id, "authentication_method": response.authentication_method}
+
+@app.post("/api/v1/identity/saml/login", tags=["Identity Federation"], summary="SAML Login")
+async def saml_login(provider_id: str = Body(...), return_url: Optional[str] = Body(None), force_authn: bool = Body(False)):
+    from src.identity_federation import SAMLProvider
+    service = get_identity_federation_service()
+    saml = SAMLProvider(service._store, "aegisgraph-sentinel")
+    response = saml.initiate_login(provider_id=provider_id, return_url=return_url, force_authn=force_authn)
+    if not response.success: raise HTTPException(status_code=400, detail=response.error_description or response.error)
+    return {"success": True, "redirect_url": response.redirect_url}
+
+@app.post("/api/v1/identity/oidc/login", tags=["Identity Federation"], summary="OIDC Login")
+async def oidc_login(provider_id: str = Body(...), return_url: Optional[str] = Body(None), scope: str = Body("openid profile email")):
+    from src.identity_federation import OIDCProvider
+    service = get_identity_federation_service()
+    oidc = OIDCProvider(service._store, "https://aegisgraph.example.com")
+    response = oidc.initiate_login(provider_id=provider_id, return_url=return_url, scope=scope)
+    if not response.success: raise HTTPException(status_code=400, detail=response.error_description or response.error)
+    return {"success": True, "redirect_url": response.redirect_url}
+
+@app.get("/api/v1/identity/user/{user_id}", tags=["Identity Federation"], summary="Get Federated User", dependencies=[Depends(require_role(Role.VIEWER))])
+async def get_user(user_id: str):
+    service = get_identity_federation_service()
+    user = service.get_user(user_id)
+    if not user: raise HTTPException(status_code=404, detail="User not found")
+    return {"user_id": user.id, "email": user.email, "provider_id": user.provider_id, "enabled": user.enabled}
+
+@app.post("/api/v1/identity/provision", tags=["Identity Federation"], summary="Provision User", dependencies=[Depends(require_role(Role.ADMIN))])
+async def provision_user(provider_id: str = Body(...), user_info: dict = Body(...)):
+    service = get_identity_federation_service()
+    user = service.provision_user(provider_id, user_info)
+    if not user: raise HTTPException(status_code=400, detail="Failed to provision user")
+    return {"user_id": user.id, "email": user.email, "provisioned": True}
+
+@app.get("/api/v1/identity/audit", tags=["Identity Federation"], summary="Get Audit Log", dependencies=[Depends(require_role(Role.AUDITOR))])
+async def get_audit_log(user_id: Optional[str] = Query(None), provider_id: Optional[str] = Query(None), limit: int = Query(100, ge=1, le=1000)):
+    service = get_identity_federation_service()
+    events = service.get_audit_log(user_id=user_id, provider_id=provider_id, limit=limit)
+    return {"events": events, "count": len(events)}
+
+@app.get("/api/v1/identity/stats", tags=["Identity Federation"], summary="Get Identity Federation Statistics", dependencies=[Depends(require_role(Role.ADMIN))])
+async def get_identity_stats():
+    return get_identity_federation_service().get_stats()
+
+
 def main():
     """Run the API server"""
     runtime_settings = get_settings(refresh=True)
