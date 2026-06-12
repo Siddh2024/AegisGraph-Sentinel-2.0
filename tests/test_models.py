@@ -6,11 +6,12 @@ Unit tests for AegisGraph Sentinel models
 import os
 import pytest
 
-if os.getenv("RUN_TORCH_TESTS", "").lower() != "true":
-    pytest.skip(
-        "PyTorch tests require RUN_TORCH_TESTS=true",
-        allow_module_level=True,
-    )
+RUN_TORCH_TESTS = os.getenv("RUN_TORCH_TESTS", "").lower() == "true"
+
+pytestmark = pytest.mark.skipif(
+    not RUN_TORCH_TESTS,
+    reason="PyTorch tests require RUN_TORCH_TESTS=true"
+)
 
 import torch
 import numpy as np
