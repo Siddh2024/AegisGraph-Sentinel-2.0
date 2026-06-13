@@ -131,16 +131,24 @@ class AdversarialDriftMonitor:
         return False # No drift
 
 
+def create_monitor(**kwargs) -> "AdversarialDriftMonitor":
+    """Return a configured AdversarialDriftMonitor instance.
+
+    Callers control when the monitor is created, avoiding thread-pool
+    and baseline-generation side effects at import time.
+
+    All keyword arguments are forwarded to AdversarialDriftMonitor.__init__.
+    """
+    return AdversarialDriftMonitor(**kwargs)
+
+
 if __name__ == "__main__":
     print("--- Testing Adversarial Drift Monitor ---")
-    monitor = AdversarialDriftMonitor()
-    
-    print("\n[Scenario 1: Normal Traffic]")
-    # Simulating normal human traffic (matches the 120ms baseline)
-    normal_traffic = np.random.normal(loc=121.0, scale=14.5, size=300)
-    monitor.evaluate_batch("keystroke_flight_time", normal_traffic)
-    
-    print("\n[Scenario 2: Adversarial Bot Attack]")
-    # Simulating bots that figured out the threshold and started typing at exactly 150ms
-    bot_traffic = np.random.normal(loc=150.0, scale=2.0, size=300)
-    monitor.evaluate_batch("keystroke_flight_time", bot_traffic)
+    with AdversarialDriftMonitor() as monitor:
+        print("\n[Scenario 1: Normal Traffic]")
+        normal_traffic = np.random.normal(loc=121.0, scale=14.5, size=300)
+        monitor.evaluate_batch("keystroke_flight_time", normal_traffic)
+
+        print("\n[Scenario 2: Adversarial Bot Attack]")
+        bot_traffic = np.random.normal(loc=150.0, scale=2.0, size=300)
+        monitor.evaluate_batch("keystroke_flight_time", bot_traffic)
