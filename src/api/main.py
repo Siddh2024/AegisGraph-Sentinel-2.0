@@ -1558,40 +1558,6 @@ SWAGGER_ENABLED = os.getenv("SWAGGER_ENABLED", "true").lower() == "true"
 
 # Initialize FastAPI app
 
-TRANSACTION_DECISIONS = Counter(
-    "aegis_transaction_decisions_total",
-    "Total transaction decisions made by AegisGraph",
-    ["decision"]
-)
-API_LATENCY = Histogram(
-    "aegis_api_latency_seconds",
-    "API request latency in seconds",
-    ["endpoint"]
-)
-ACTIVE_HONEYPOTS = Gauge(
-    "aegis_active_honeypots",
-    "Number of currently active honeypots"
-)
-
-@app.middleware("http")
-async def prometheus_latency_middleware(request: Request, call_next):
-    endpoint = request.url.path
-    start_time = time.time()
-    response = await call_next(request)
-    duration = time.time() - start_time
-    API_LATENCY.labels(endpoint=endpoint).observe(duration)
-    return response
-
-@app.get("/metrics", tags=["System"])
-async def metrics():
-    try:
-        manager = get_honeypot_manager()
-        active_count = len(manager.get_active_honeypots())
-        ACTIVE_HONEYPOTS.set(active_count)
-    except Exception:
-        pass
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
 app = FastAPI(
     title="AegisGraph Sentinel 2.0 API",
     description=(
@@ -1634,6 +1600,41 @@ app = FastAPI(
     openapi_url="/openapi.json" if SWAGGER_ENABLED else None,
     lifespan=lifespan
 )
+
+TRANSACTION_DECISIONS = Counter(
+    "aegis_transaction_decisions_total",
+    "Total transaction decisions made by AegisGraph",
+    ["decision"]
+)
+API_LATENCY = Histogram(
+    "aegis_api_latency_seconds",
+    "API request latency in seconds",
+    ["endpoint"]
+)
+ACTIVE_HONEYPOTS = Gauge(
+    "aegis_active_honeypots",
+    "Number of currently active honeypots"
+)
+
+@app.middleware("http")
+async def prometheus_latency_middleware(request: Request, call_next):
+    endpoint = request.url.path
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    API_LATENCY.labels(endpoint=endpoint).observe(duration)
+    return response
+
+@app.get("/metrics", tags=["System"])
+async def metrics():
+    try:
+        manager = await get_honeypot_manager()
+        active_count = len(manager.get_active_honeypots())
+        ACTIVE_HONEYPOTS.set(active_count)
+    except Exception:
+        pass
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 # CORS middleware
 #
