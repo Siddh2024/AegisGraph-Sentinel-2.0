@@ -37,6 +37,9 @@ class FraudScore:
     explanation: str  # Human-readable explanation
     breakdown: Dict[str, float]  # Component risk scores
     influential_neighbors: List[Dict]  # Top neighbors by influence
+    top_relationships: List[Dict]
+    high_risk_nodes: List[str]
+    attention_summary: str
     model_version: str
     inference_time_ms: float
     graph_size: int  # Number of nodes in subgraph
@@ -179,6 +182,12 @@ class ProductionRiskScorer:
                     'edge_type': edge_type,
                     'edge_attr': edge_attr,
                 })
+                attention_weights = None
+                attention_edge_index = None
+
+                if isinstance(outputs, dict):
+                    attention_weights = outputs.get("attention_weights")
+                    attention_edge_index = outputs.get("attention_edge_index")
                 
                 # Extract risk score
                 if isinstance(outputs, dict):
@@ -197,6 +206,15 @@ class ProductionRiskScorer:
                 subgraph,
                 top_k=5,
             )
+            top_relationships = self._extract_top_relationships(
+                subgraph,
+                attention_weights,
+                attention_edge_index,
+                top_k=5,
+            )
+
+            high_risk_nodes = self._identify_high_risk_nodes(top_relationships)
+            attention_summary = self._generate_attention_summary(top_relationships)
             
             # Compute component risks
             breakdown = {
@@ -233,6 +251,9 @@ class ProductionRiskScorer:
                 explanation=explanation,
                 breakdown=breakdown,
                 influential_neighbors=influential_neighbors,
+                top_relationships=top_relationships,
+                high_risk_nodes=high_risk_nodes,
+                attention_summary=attention_summary,
                 model_version=self.model_version,
                 inference_time_ms=inference_time,
                 graph_size=subgraph['num_nodes'],
@@ -385,6 +406,104 @@ class ProductionRiskScorer:
             })
         
         return influential[:top_k]
+
+    def _extract_top_relationships(
+        self,
+        subgraph: Dict,
+        attention_weights,
+        attention_edge_index,
+        top_k: int = 5,
+    ) -> List[Dict]:
+        """
+        Extract highest-attention graph relationships.
+        """
+
+        if (
+            attention_weights is None
+            or attention_edge_index is None
+        ):
+            return []
+
+        idx_to_node_id = subgraph["idx_to_node_id"]
+
+        # Multi-head attention -> average heads
+        if attention_weights.dim() > 1:
+            scores = attention_weights.mean(dim=-1)
+        else:
+            scores = attention_weights
+
+        top_indices = torch.argsort(
+            scores,
+            descending=True,
+        )[:top_k]
+
+        relationships = []
+
+        for edge_pos in top_indices:
+
+            edge_pos = edge_pos.item()
+
+            src_idx = attention_edge_index[0, edge_pos].item()
+            dst_idx = attention_edge_index[1, edge_pos].item()
+
+            relationships.append(
+                {
+                    "source_node": idx_to_node_id.get(
+                        src_idx,
+                        "UNKNOWN",
+                    ),
+                    "target_node": idx_to_node_id.get(
+                        dst_idx,
+                        "UNKNOWN",
+                    ),
+                    "attention_score": round(
+                        float(scores[edge_pos]),
+                        4,
+                    ),
+                }
+            )
+
+        return relationships
+    
+    def _identify_high_risk_nodes(
+        self,
+        top_relationships: List[Dict],
+    ) -> List[str]:
+
+        nodes = []
+
+        for relationship in top_relationships:
+
+            nodes.append(
+                relationship["source_node"]
+            )
+
+            nodes.append(
+                relationship["target_node"]
+            )
+
+        return list(dict.fromkeys(nodes))[:5]
+    
+    def _generate_attention_summary(
+        self,
+        top_relationships: List[Dict],
+    ) -> str:
+
+        if not top_relationships:
+            return "No high-attention graph relationships identified."
+
+        lines = []
+
+        for relationship in top_relationships:
+
+            lines.append(
+                f"{relationship['source_node']} -> "
+                f"{relationship['target_node']} "
+                f"(Attention Score: "
+                f"{relationship['attention_score']:.2f})"
+            )
+
+        return "\n".join(lines)
     
     def _compute_velocity_risk(self, transaction: Dict) -> float:
         """
@@ -504,6 +623,9 @@ class ProductionRiskScorer:
             explanation="Heuristic scoring (model unavailable)",
             breakdown={'heuristic_risk': risk},
             influential_neighbors=[],
+            top_relationships=[],
+            high_risk_nodes=[],
+            attention_summary="No graph investigation data available.",
             model_version=f"{self.model_version}-HEURISTIC",
             inference_time_ms=10.0,
             graph_size=0,
