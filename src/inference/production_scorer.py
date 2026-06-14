@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import logging
-from collections import deque
+from collections import deque, OrderedDict
 from threading import Lock
 from typing import Dict, Iterator, List, Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -49,19 +49,31 @@ class FraudScore:
 
 
 class _ThreadSafeCache:
-    """Thread-safe dict wrapper for concurrent subgraph caching."""
+    """Thread-safe LRU cache for concurrent subgraph caching.
 
-    def __init__(self):
-        self._data: Dict[str, Dict] = {}
+    Bounded by maxsize to prevent unbounded tensor memory accumulation
+    within a single batch when all source accounts are distinct.
+    """
+
+    def __init__(self, maxsize: int = 256):
+        self._data: OrderedDict[str, Dict] = OrderedDict()
         self._lock = Lock()
+        self._maxsize = maxsize
 
     def get(self, key: str) -> Optional[Dict]:
         with self._lock:
-            return self._data.get(key)
+            if key not in self._data:
+                return None
+            self._data.move_to_end(key)
+            return self._data[key]
 
     def set(self, key: str, value: Dict) -> None:
         with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
             self._data[key] = value
+            if len(self._data) > self._maxsize:
+                self._data.popitem(last=False)
 
 
 class ProductionRiskScorer:
