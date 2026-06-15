@@ -296,10 +296,13 @@ class Neo4jGraphProvider:
 
         limit = self.DEFAULT_SUBGRAPH_LIMIT
         hop_pattern = f"[r:TRANSFER*1..{max_hops}]"
+        # Neighborhood Sampling (GraphSAGE-style) to limit memory overhead
         query = (
-            f"MATCH path = (a:Account {{id: $account_id}})-{hop_pattern}-(b:Account)\n"
-            "RETURN path\n"
-            "LIMIT $limit"
+            f"MATCH (a:Account {{id: $account_id}})\n"
+            f"MATCH path = (a)-{hop_pattern}-(b:Account)\n"
+            f"WITH path, b LIMIT 50\n" # Limit branching factor per query to prevent memory exhaustion
+            f"RETURN path\n"
+            f"LIMIT $limit"
         )
 
         try:
