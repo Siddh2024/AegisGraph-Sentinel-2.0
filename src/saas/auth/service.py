@@ -271,7 +271,7 @@ class AuthService:
                 mfa_token=mfa_token,
             )
 
-        return self._create_auth_result(record.user_id, org_id)
+        return self._create_auth_result(record, org_id)
 
     def authenticate_api_key(self, api_key: str) -> AuthResult:
         """Authenticate using API key.
@@ -309,19 +309,23 @@ class AuthService:
                 success=False,
                 error=f"Provider {provider} not configured",
             )
-        
+
         sso_provider = self.sso_providers[provider]
-        
+
         # Exchange code for tokens
         tokens = sso_provider.exchange_code(code, redirect_uri)
-        
+
         # Get user info from provider
         user_info = sso_provider.get_user_info(tokens["access_token"])
-        
+
         # Find or create user
         user_id, org_id = self._find_or_create_sso_user(provider, user_info)
-        
-        return self._create_auth_result(user_id, org_id, provider=provider)
+
+        record = self.user_store.get_by_id(user_id)
+        if record is None:
+            return AuthResult(success=False, error="User record not found after SSO login")
+
+        return self._create_auth_result(record, org_id, provider=provider)
 
     def verify_mfa(self, user_id: str, mfa_token: str, token: str) -> AuthResult:
         """Verify TOTP MFA token and complete authentication.
@@ -340,35 +344,35 @@ class AuthService:
         if not self.verify_mfa_token(record.mfa_secret, token):
             return AuthResult(success=False, error="Invalid MFA token")
 
-        return self._create_auth_result(user_id, record.organization_id)
+        return self._create_auth_result(record, record.organization_id)
 
     def _create_auth_result(
         self,
-        user_id: str,
+        record: UserRecord,
         organization_id: str,
         provider: Optional[AuthProvider] = None,
     ) -> AuthResult:
         """Create successful authentication result"""
         session_id = secrets.token_hex(16)
         now = datetime.utcnow()
-        
+
         access_payload = TokenPayload(
-            sub=user_id,
+            sub=record.user_id,
             org=organization_id,
-            email="user@example.com",
-            role="member",
-            permissions=["read", "write"],
+            email=record.email,
+            role=record.role,
+            permissions=record.permissions,
             exp=now + timedelta(seconds=self.access_token_expiry),
             iat=now,
             jti=secrets.token_hex(16),
         )
-        
+
         access_token = self.create_access_token(access_payload)
-        refresh_token = self.create_refresh_token(user_id, session_id)
-        
+        refresh_token = self.create_refresh_token(record.user_id, session_id)
+
         return AuthResult(
             success=True,
-            user_id=user_id,
+            user_id=record.user_id,
             organization_id=organization_id,
             session_id=session_id,
             access_token=access_token,
@@ -412,7 +416,7 @@ class AuthService:
         if record is None:
             raise AuthenticationError("User not found")
 
-        return self._create_auth_result(record.user_id, record.organization_id)
+        return self._create_auth_result(record, record.organization_id)
 
     def add_sso_provider(self, provider: AuthProvider, config: Dict[str, Any]):
         """Add SSO provider configuration"""
