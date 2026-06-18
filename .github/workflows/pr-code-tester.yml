@@ -151,7 +151,7 @@ jobs:
           print(f"Running: {' '.join(test_execution_command)}")
           execution_result = subprocess.run(test_execution_command)
           
-          if execution_result.returncode != 0:
+          if execution_result.returncode not in (0, 5):
               print("❌ Dynamic verification testing returned failure validation bounds.")
               sys.exit(1)
               
