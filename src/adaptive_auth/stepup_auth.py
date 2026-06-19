@@ -198,6 +198,15 @@ class StepUpAuthService:
                 remaining_attempts=0,
             )
 
+        # Reject challenges in a terminal state to prevent replay
+        if challenge.status != "pending":
+            return ChallengeResponse(
+                challenge_id=challenge_id,
+                success=False,
+                message="Challenge is no longer active",
+                remaining_attempts=0,
+            )
+
         # Check if expired
         if challenge.is_expired():
             challenge.status = "expired"
@@ -234,6 +243,9 @@ class StepUpAuthService:
             challenge.status = "completed"
             challenge.completed_at = datetime.now(timezone.utc)
             self.store.update_challenge(challenge)
+            self._verification_codes.pop(challenge_id, None)
+            self._verification_codes.pop(f"{challenge_id}_otp", None)
+            self._callback_pending.pop(challenge_id, None)
 
             # Update session trust
             session = self.store.get_session_unsafe(challenge.session_id)
@@ -359,6 +371,9 @@ class StepUpAuthService:
         if challenge and challenge.status == "pending":
             challenge.status = "cancelled"
             self.store.update_challenge(challenge)
+            self._verification_codes.pop(challenge_id, None)
+            self._verification_codes.pop(f"{challenge_id}_otp", None)
+            self._callback_pending.pop(challenge_id, None)
             return True
         return False
 
